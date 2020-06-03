@@ -23,6 +23,7 @@ pub enum SExpr {
     Operation(fn(&mut Context) -> SExpr),
 }
 
+#[derive(Clone)]
 pub struct Context {
     bindings: Bindings,
 }
@@ -101,6 +102,46 @@ impl SExpr {
             _ => None,
         }
     }
+
+    fn as_int(self) -> Option<isize> {
+        if let SExpr::Int(i) = self {
+            Some(i)
+        } else {
+            None
+        }
+    }
+
+    fn as_ident(self) -> Option<Ident> {
+        if let SExpr::Ident(id) = self {
+            Some(id)
+        } else {
+            None
+        }
+    }
+}
+
+macro_rules! get {
+    ($ident:expr, $cxt:expr) => {
+        $cxt.lookup(&parse::parse_ident($ident).unwrap())
+            .unwrap()
+            .eval($cxt)
+    };
+}
+
+macro_rules! primitive {
+    ($name:expr, $ptn:expr, $impl:expr, $cxt:ident) => {
+        Bindings::of(
+            &parse::parse_ident($name).unwrap(),
+            &SExpr::Fun(
+                #[allow(unused_mut)]
+                Box::new(SExpr::Operation(|mut $cxt: &mut Context| {
+                    use SExpr::*;
+                    $impl
+                })),
+                Box::new(parse::parse($ptn)),
+            ),
+        )
+    };
 }
 
 impl Bindings {
@@ -110,23 +151,41 @@ impl Bindings {
     }
 
     fn new() -> Bindings {
-        Bindings(HashMap::new()).join(Bindings::of(
-            &parse::parse_ident("#/add").unwrap(),
-            &SExpr::Fun(
-                Box::new(SExpr::Operation(|cxt| {
-                    match dbg!((
-                        cxt.lookup(&parse::parse_ident("lhs").unwrap())
-                            .map(|e| e.eval(cxt)),
-                        cxt.lookup(&parse::parse_ident("rhs").unwrap())
-                            .map(|e| e.eval(cxt)),
-                    )) {
-                        (Some(SExpr::Int(lhs)), Some(SExpr::Int(rhs))) => SExpr::Int(lhs + rhs),
-                        _ => unreachable!(),
+        Bindings(HashMap::new())
+            .join(primitive!(
+                "#/add",
+                "(,lhs ,rhs)",
+                Int(get!("lhs", cxt).as_int().unwrap() + get!("rhs", cxt).as_int().unwrap()),
+                cxt
+            ))
+            .join(primitive!(
+                "#/bind-expr",
+                "(,ident ,expr)",
+                {
+                    cxt.bindings.0.insert(
+                        get!("ident", &mut cxt.clone()).as_ident().unwrap(),
+                        get!("expr", &mut cxt.clone()),
+                    );
+                    List(vec![])
+                },
+                cxt
+            ))
+            .join(primitive!(
+                "#/do",
+                ",exprs",
+                {
+                    match get!("exprs", &mut cxt.clone()) {
+                        List(exprs) => {
+                            for expr in exprs {
+                                let _ = expr.eval(&mut cxt);
+                            }
+                        }
+                        _ => {}
                     }
-                })),
-                Box::new(dbg!(parse::parse("(,lhs ,rhs)"))),
-            ),
-        ))
+                    List(vec![])
+                },
+                cxt
+            ))
     }
 
     fn of(ident: &Ident, value: &SExpr) -> Bindings {
@@ -385,4 +444,6 @@ mod tests {
         ])),
         Int(2), Int(3)
     ])])}
+    eval_test! {simple_do, "(#/do 1 (#/add 1 2))", List(vec![])}
+    eval_test! {define_and_use, "(#/do (#/bind-expr `foo 3) foo)", List(vec![])}
 }
