@@ -4,6 +4,8 @@
 #![feature(try_trait)]
 #![cfg_attr(not(test), allow(dead_code))]
 
+mod parse;
+
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::iter::Extend;
@@ -17,18 +19,19 @@ pub enum SExpr {
     Ident(Ident),
     Place(Ident),
     Quote,
+    Unquote,
     CompileError(String),
     Fun(Box<SExpr>, Box<SExpr>),
     Int(isize),
     Operation(fn(&mut Context) -> SExpr),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Context {
     bindings: Bindings,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Ident {
     NS(Vec<Ident>),
     Name(String),
@@ -38,20 +41,27 @@ pub enum Ident {
 struct Bindings(HashMap<Ident, SExpr>);
 
 impl SExpr {
-    fn eval(self, mut cxt: &mut Context) -> SExpr {
+    fn eval(&self, mut cxt: &mut Context) -> SExpr {
+        dbg!(self);
+        dbg!(cxt.clone());
         use SExpr::*;
         match self {
             List(ls) => {
                 if ls.is_empty() {
-                    return List(ls);
+                    return List(ls.to_vec());
                 }
                 match ls[0].clone().eval(cxt) {
                     Fun(fun, args_ptn) => {
-                        if let Some(bindings) = args_ptn.match_ptn(&List(ls[1..].to_vec())) {
-                            fun.eval(&mut Context {
+                        if let Some(bindings) = args_ptn.match_ptn(&List(
+                            ls[1..].iter()
+                                .map(|e| dbg!(dbg!(e).eval(&mut cxt)))
+                                .collect::<Vec<_>>(),
+                        )) {
+                            *cxt = Context {
                                 bindings: cxt.bindings.clone().join(bindings),
                                 ..*cxt
-                            })
+                            };
+                            fun.eval(&mut cxt)
                         } else {
                             CompileError(format!(
                                 "Arguments ({:?}) did not match for {:?}, requires {:?}",
@@ -65,7 +75,7 @@ impl SExpr {
                         if ls.len() != 2 {
                             CompileError("Quote only takes a single argument".to_string())
                         } else {
-                            ls[1].clone()
+                            ls[1].clone().quote(&mut cxt)
                         }
                     }
                     e => CompileError(format!("{:?} is not callable", e)),
@@ -75,7 +85,7 @@ impl SExpr {
                 .lookup(&id)
                 .unwrap_or(CompileError(format!("Unknown name {:?}", id))),
             Operation(oper) => oper(&mut cxt),
-            e => e,
+            e => e.clone(),
         }
     }
 
@@ -103,6 +113,24 @@ impl SExpr {
         }
     }
 
+    fn quote(self, mut cxt: &mut Context) -> SExpr {
+        use SExpr::*;
+        match self {
+            List(ls) => {
+                if ls.get(0) == Some(&Unquote) {
+                    ls[1].eval(&mut cxt)
+                } else {
+                    List(
+                        ls.into_iter()
+                            .map(|e| e.quote(&mut cxt))
+                            .collect::<Vec<_>>(),
+                    )
+                }
+            }
+            e => e,
+        }
+    }
+
     fn as_int(self) -> Option<isize> {
         if let SExpr::Int(i) = self {
             Some(i)
@@ -122,9 +150,7 @@ impl SExpr {
 
 macro_rules! get {
     ($ident:expr, $cxt:expr) => {
-        $cxt.lookup(&parse::parse_ident($ident).unwrap())
-            .unwrap()
-            .eval($cxt)
+        $cxt.lookup(&parse::parse_ident($ident).unwrap()).unwrap()
     };
 }
 
@@ -180,9 +206,38 @@ impl Bindings {
                                 let _ = expr.eval(&mut cxt);
                             }
                         }
-                        _ => {}
+                        _ => unreachable!(),
                     }
                     List(vec![])
+                },
+                cxt
+            ))
+            .join(primitive!(
+                "#/do/ret-all",
+                "(,exprs)",
+                {
+                    let mut results = Vec::new();
+                    match get!("exprs", &mut cxt.clone()) {
+                        List(exprs) => {
+                            for expr in exprs {
+                                results.push(expr.eval(&mut cxt));
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                    List(results)
+                },
+                cxt
+            ))
+            .join(primitive!(
+                "#/eq", //this will probably be not a primitive later
+                "(,lhs ,rhs)",
+                {
+                    if get!("lhs", &mut cxt.clone()) == get!("rhs", &mut cxt.clone()) {
+                        Keyword(crate::Ident::Name("true".to_string()))
+                    } else {
+                        Keyword(crate::Ident::Name("false".to_string()))
+                    }
                 },
                 cxt
             ))
@@ -199,7 +254,7 @@ impl Bindings {
 
 impl Context {
     fn lookup(&self, ident: &Ident) -> Option<SExpr> {
-        dbg!(self.bindings.0.get(&ident).cloned())
+        self.bindings.0.get(&ident).cloned()
     }
 
     fn new() -> Context {
@@ -237,11 +292,33 @@ impl Debug for SExpr {
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
             Quote => write!(f, "Quote"),
+            Unquote => write!(f, "Unquote"),
             CompileError(e) => write!(f, "CompileError({:?})", e),
             Fun(fun, p) => write!(f, "Fun({:?}, {:?})", *fun, *p),
             Int(i) => write!(f, "Int({:?})", i),
             Operation(_) => write!(f, "Operation"),
         }
+    }
+}
+
+impl Debug for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Ident::Name(n) => write!(f, "{}", n)?,
+            Ident::NS(ns) => {
+                match &ns[0] {
+                    Ident::Name(n) => write!(f, "{}", n),
+                    Ident::NS(ns) => write!(f, "({:?})", ns),
+                }?;
+                for name in ns.iter().skip(1) {
+                    match name {
+                        Ident::Name(n) => write!(f, "/{}", n),
+                        Ident::NS(ns) => write!(f, "/({:?})", ns),
+                    }?;
+                }
+            }
+        };
+        Ok(())
     }
 }
 
@@ -277,144 +354,10 @@ impl From<NoneError> for SExprError {
     }
 }
 
-mod parse {
-    use super::SExpr::*;
-    use super::*;
-
-    pub fn parse(source: &str) -> SExpr {
-        parse_at(source, &mut 0)
-    }
-
-    fn parse_at(source: &str, mut offset: &mut usize) -> SExpr {
-        dbg!("parse_at");
-        let c = source[*offset..].chars().nth(0)?;
-        dbg!(c);
-        inc_char_idx(source, &mut offset);
-        let expr = match c {
-            ' ' | '\n' => parse_at(source, offset),
-            '(' => parse_list_at(source, &mut offset),
-            ':' => Keyword(parse_ident_at(source, &mut offset)?),
-            ',' => dbg!(Place(parse_ident_at(source, &mut offset)?)),
-            '`' => List(vec![Quote, parse_at(source, &mut offset)]),
-            c if (c.is_ascii_digit() || c == '-') => {
-                dec_char_idx(source, &mut offset);
-                parse_int_at(source, offset)
-            }
-            c if is_ident_char(c) => {
-                dec_char_idx(source, &mut offset);
-                Ident(parse_ident_at(source, &mut offset)?)
-            }
-            c => CompileError(format!("Unknown character {}", c)),
-        };
-        expr
-    }
-
-    fn parse_list_at(source: &str, mut offset: &mut usize) -> SExpr {
-        dbg!("parse_list_at");
-        let mut list = Vec::new();
-        loop {
-            dbg!();
-            if source[*offset..].chars().nth(0)? == ')' {
-                break;
-            }
-            list.push(parse_at(source, &mut offset));
-            inc_char_idx(source, &mut offset);
-        }
-        List(list)
-    }
-
-    pub fn parse_ident(source: &str) -> Result<super::Ident, SExprError> {
-        parse_ident_at(source, &mut 0)
-    }
-
-    fn parse_ident_at(source: &str, mut offset: &mut usize) -> Result<super::Ident, SExprError> {
-        dbg!("parse_ident_at");
-        let mut names = Vec::new();
-        let mut name = String::new();
-        loop {
-            let c = match source[*offset..].chars().nth(0) {
-                Some(c) => c,
-                None => break,
-            };
-            if c.is_whitespace() {
-                break;
-            }
-            dbg!(c);
-            match c {
-                c if is_ident_char(c) => {
-                    name.push(c);
-                }
-                '(' => names.push(parse_ident_at(source, &mut offset)?),
-                ')' => {
-                    dec_char_idx(source, &mut offset);
-                    break;
-                }
-                '/' => {
-                    names.push(super::Ident::Name(name));
-                    name = String::new();
-                }
-                c => {
-                    return Err(format!("Bad char {} in identifier", c).into());
-                }
-            }
-            inc_char_idx(source, &mut offset);
-        }
-        dbg!(Ok(if names.len() == 0 {
-            super::Ident::Name(name)
-        } else {
-            names.push(super::Ident::Name(name));
-            super::Ident::NS(names)
-        }))
-    }
-
-    fn is_ident_char(c: char) -> bool {
-        c.is_ascii_alphanumeric() || ['\'', '#', '-', '_'].contains(&c)
-    }
-
-    fn parse_int_at<'a>(source: &'a str, mut offset: &mut usize) -> SExpr {
-        let negate = source[*offset..].chars().nth(0)? == '-';
-        if negate {
-            inc_char_idx(source, &mut offset);
-        }
-        dbg!("parse_int_at");
-        let mut n_str = String::new();
-        loop {
-            let d = match source[*offset..].chars().nth(0) {
-                Some(d) => d,
-                None => break,
-            };
-            dbg!(d);
-            if !d.is_ascii_digit() {
-                dec_char_idx(source, &mut offset);
-                break;
-            }
-            n_str.push(d);
-            inc_char_idx(source, &mut offset);
-        }
-        n_str
-            .parse::<usize>()
-            .map(|n| if negate { -(n as isize) } else { n as isize })
-            .map(|n| Int(n))
-            .unwrap_or(CompileError(format!("Could not parse number {}", n_str)))
-    }
-}
-
-fn inc_char_idx(source: &str, idx: &mut usize) {
-    *idx += 1;
-    while !source.is_char_boundary(*idx) && *idx < source.len() {
-        *idx += 1;
-    }
-}
-
-fn dec_char_idx(source: &str, idx: &mut usize) {
-    *idx -= 1;
-    while !source.is_char_boundary(*idx) {
-        *idx -= 1;
-    }
-}
-
 fn main() {
-    dbg!(parse::parse("(,lhs ,rhs)"));
+    dbg!(parse::parse(
+        "(#/do/ret-all `(`(#/bind-expr `foo 3) `foo)))"
+    ));
 }
 
 #[cfg(test)]
@@ -437,13 +380,28 @@ mod tests {
     eval_test! {neg_number, "-5", Int(-5)}
     eval_test! {one_plus_one, "(#/add 1 1)", Int(2)}
     eval_test! {one_plue_one_plus_one, "(#/add 1 (#/add 1 1))", Int(3)}
-    eval_test! {quote, "`(1 (#/add 2 3))", List(vec![Int(1), List(vec![
-        SExpr::Ident(super::Ident::NS(vec![
-            super::Ident::Name("#".to_string()),
-            super::Ident::Name("add".to_string())
-        ])),
-        Int(2), Int(3)
-    ])])}
+    eval_test! {multiple_levels_ident, "`foo/bar/baz", Ident(super::Ident::NS(vec![
+        super::Ident::Name("foo".to_string()),
+        super::Ident::Name("bar".to_string()),
+        super::Ident::Name("baz".to_string()),
+    ]))}
+    eval_test! {quote, "`(1 (#/add 2 3))", List(vec![
+        Int(1),
+        List(vec![
+            Ident(super::Ident::NS(vec![
+                super::Ident::Name("#".to_string()),
+                super::Ident::Name("add".to_string())
+            ])),
+            Int(2),
+            Int(3),
+        ]),
+    ])}
     eval_test! {simple_do, "(#/do 1 (#/add 1 2))", List(vec![])}
-    eval_test! {define_and_use, "(#/do (#/bind-expr `foo 3) foo)", List(vec![])}
+    eval_test! {define_and_use, "(#/do/ret-all `((#/bind-expr `foo 3) foo))", List(vec![
+        List(vec![]),
+        Int(3)
+    ])}
+    eval_test! {eq, "(#/eq 1 1)", Keyword(super::Ident::Name("true".to_string()))}
+    eval_test! {neq, "(#/eq 1 2)", Keyword(super::Ident::Name("false".to_string()))}
+    eval_test! {eq_lists, "(#/eq `(1 2) `(1 `(2 3)))", Keyword(super::Ident::Name("false".to_string()))}
 }
