@@ -5,12 +5,14 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 mod parse;
+mod context;
 
-use std::collections::HashMap;
+use lazy_static::lazy_static;
 use std::fmt::Debug;
-use std::iter::Extend;
 use std::ops::Try;
 use std::option::NoneError;
+
+use crate::context::{Context, Bindings};
 
 #[derive(Clone)]
 pub enum SExpr {
@@ -26,10 +28,6 @@ pub enum SExpr {
     Operation(fn(&mut Context) -> SExpr),
 }
 
-#[derive(Clone, Debug)]
-pub struct Context {
-    bindings: Bindings,
-}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Ident {
@@ -37,8 +35,6 @@ pub enum Ident {
     Name(String),
 }
 
-#[derive(Clone, Debug)]
-struct Bindings(HashMap<Ident, SExpr>);
 
 impl SExpr {
     fn eval(&self, mut cxt: &mut Context) -> SExpr {
@@ -148,122 +144,6 @@ impl SExpr {
     }
 }
 
-macro_rules! get {
-    ($ident:expr, $cxt:expr) => {
-        $cxt.lookup(&parse::parse_ident($ident).unwrap()).unwrap()
-    };
-}
-
-macro_rules! primitive {
-    ($name:expr, $ptn:expr, $impl:expr, $cxt:ident) => {
-        Bindings::of(
-            &parse::parse_ident($name).unwrap(),
-            &SExpr::Fun(
-                #[allow(unused_mut)]
-                Box::new(SExpr::Operation(|mut $cxt: &mut Context| {
-                    use SExpr::*;
-                    $impl
-                })),
-                Box::new(parse::parse($ptn)),
-            ),
-        )
-    };
-}
-
-impl Bindings {
-    fn join(mut self, other: Bindings) -> Bindings {
-        self.0.extend(other.0.into_iter());
-        self
-    }
-
-    fn new() -> Bindings {
-        Bindings(HashMap::new())
-            .join(primitive!(
-                "#/add",
-                "(,lhs ,rhs)",
-                Int(get!("lhs", cxt).as_int().unwrap() + get!("rhs", cxt).as_int().unwrap()),
-                cxt
-            ))
-            .join(primitive!(
-                "#/bind-expr",
-                "(,ident ,expr)",
-                {
-                    cxt.bindings.0.insert(
-                        get!("ident", &mut cxt.clone()).as_ident().unwrap(),
-                        get!("expr", &mut cxt.clone()),
-                    );
-                    List(vec![])
-                },
-                cxt
-            ))
-            .join(primitive!(
-                "#/do",
-                ",exprs",
-                {
-                    match get!("exprs", &mut cxt.clone()) {
-                        List(exprs) => {
-                            for expr in exprs {
-                                let _ = expr.eval(&mut cxt);
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                    List(vec![])
-                },
-                cxt
-            ))
-            .join(primitive!(
-                "#/do/ret-all",
-                "(,exprs)",
-                {
-                    let mut results = Vec::new();
-                    match get!("exprs", &mut cxt.clone()) {
-                        List(exprs) => {
-                            for expr in exprs {
-                                results.push(expr.eval(&mut cxt));
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                    List(results)
-                },
-                cxt
-            ))
-            .join(primitive!(
-                "#/eq", //this will probably be not a primitive later
-                "(,lhs ,rhs)",
-                {
-                    if get!("lhs", &mut cxt.clone()) == get!("rhs", &mut cxt.clone()) {
-                        Keyword(crate::Ident::Name("true".to_string()))
-                    } else {
-                        Keyword(crate::Ident::Name("false".to_string()))
-                    }
-                },
-                cxt
-            ))
-    }
-
-    fn of(ident: &Ident, value: &SExpr) -> Bindings {
-        Bindings({
-            let mut m = HashMap::new();
-            m.insert(ident.clone(), value.clone());
-            m
-        })
-    }
-}
-
-impl Context {
-    fn lookup(&self, ident: &Ident) -> Option<SExpr> {
-        self.bindings.0.get(&ident).cloned()
-    }
-
-    fn new() -> Context {
-        Context {
-            bindings: Bindings::new(),
-        }
-    }
-}
-
 impl PartialEq for SExpr {
     fn eq(&self, other: &SExpr) -> bool {
         use SExpr::*;
@@ -359,6 +239,13 @@ fn main() {
         "(#/do/ret-all `(`(#/bind-expr `foo 3) `foo)))"
     ));
 }
+
+lazy_static! {
+    static ref LISPAP_STD: SExpr = parse::parse(
+        &format!("(#/do {})", std::fs::read_to_string("lispap_std/std.lp").unwrap())
+    );
+}
+        
 
 #[cfg(test)]
 mod tests {
