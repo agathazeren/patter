@@ -30,7 +30,7 @@ fn parse_at(source: &str, mut offset: &mut usize) -> SExpr {
 fn parse_list_at(source: &str, mut offset: &mut usize) -> SExpr {
     let mut list = Vec::new();
     loop {
-        if source[*offset..].chars().nth(0)? == ')' {
+        if source[*offset..].chars().skip_while(|c| c.is_whitespace()).nth(0)? == ')' {
             break;
         }
         list.push(parse_at(source, &mut offset));

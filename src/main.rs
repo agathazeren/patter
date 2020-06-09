@@ -260,10 +260,10 @@ mod tests {
             fn $name() {
                 let code = List(vec![
                     Ident(parse::parse_ident("#/do/ret-last").unwrap()),
-                    List(vec![Quote, List(vec![
-                        LISPAP_STD.clone(),
-                        parse::parse($code),
-                    ])])
+                    List(vec![
+                        Quote,
+                        List(vec![LISPAP_STD.clone(), parse::parse($code)]),
+                    ]),
                 ]);
                 assert_eq!(code.eval(&mut Context::new()), $expected);
             }
@@ -302,6 +302,15 @@ mod tests {
     eval_test! {eq, "(#/eq 1 1)", Keyword(super::Ident::Name("true".to_string()))}
     eval_test! {neq, "(#/eq 1 2)", Keyword(super::Ident::Name("false".to_string()))}
     eval_test! {eq_lists, "(#/eq `(1 2) `(1 `(2 3)))",
-                Keyword(super::Ident::Name("false".to_string()))}
+    Keyword(super::Ident::Name("false".to_string()))}
     eval_test_std! {uses_std, "std-is-here", Int(42)}
+    eval_test! {define_and_use_multiline, "(#/do/ret-all
+                                               `((#/bind-expr `foo 3) 
+                                               foo)
+                                           )",
+                List(vec![
+                    List(vec![]),
+                    Int(3)
+                ])
+    }
 }

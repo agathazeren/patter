@@ -26,6 +26,7 @@ macro_rules! primitive {
             &SExpr::Fun(
                 #[allow(unused_mut)]
                 Box::new(SExpr::Operation(|mut $cxt: &mut Context| {
+                    #[allow(unused_imports)]
                     use crate::SExpr::*;
                     $impl
                 })),
@@ -57,7 +58,7 @@ impl Bindings {
                         get!("ident", &mut cxt.clone()).as_ident().unwrap(),
                         get!("expr", &mut cxt.clone()),
                     );
-                    List(vec![]) 
+                    List(vec![])
                 },
                 cxt
             ))
@@ -119,6 +120,24 @@ impl Bindings {
                         Keyword(crate::Ident::Name("true".to_string()))
                     } else {
                         Keyword(crate::Ident::Name("false".to_string()))
+                    }
+                },
+                cxt
+            ))
+            .join(primitive!(
+                "#/with",
+                "(,ptn ,expr ,consec ,alt)",
+                {
+                    if let Some(bindings) =
+                        get!("expr", &mut cxt.clone()).match_ptn(&get!("ptn", &mut cxt.clone()))
+                    {
+                        *cxt = Context {
+                            bindings: cxt.bindings.clone().join(bindings),
+                            ..*cxt
+                        };
+                        get!("consec", &mut cxt.clone()).eval(&mut cxt)
+                    } else {
+                        get!("alt", &mut cxt.clone()).eval(&mut cxt)
                     }
                 },
                 cxt
