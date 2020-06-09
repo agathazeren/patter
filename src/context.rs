@@ -1,10 +1,9 @@
-
 use std::collections::HashMap;
 use std::iter::Extend;
 
 use crate::parse;
-use crate::SExpr;
 use crate::Ident;
+use crate::SExpr;
 
 #[derive(Clone, Debug)]
 pub struct Context {
@@ -13,7 +12,6 @@ pub struct Context {
 
 #[derive(Clone, Debug)]
 pub struct Bindings(HashMap<Ident, SExpr>);
-
 
 macro_rules! get {
     ($ident:expr, $cxt:expr) => {
@@ -59,7 +57,7 @@ impl Bindings {
                         get!("ident", &mut cxt.clone()).as_ident().unwrap(),
                         get!("expr", &mut cxt.clone()),
                     );
-                    List(vec![])
+                    List(vec![]) 
                 },
                 cxt
             ))
@@ -97,6 +95,23 @@ impl Bindings {
                 cxt
             ))
             .join(primitive!(
+                "#/do/ret-last",
+                "(,exprs)",
+                {
+                    let mut result = List(vec![]);
+                    match get!("exprs", &mut cxt.clone()) {
+                        List(exprs) => {
+                            for expr in exprs {
+                                result = expr.eval(&mut cxt);
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                    result
+                },
+                cxt
+            ))
+            .join(primitive!(
                 "#/eq", //this will probably be not a primitive later
                 "(,lhs ,rhs)",
                 {
@@ -130,4 +145,3 @@ impl Context {
         }
     }
 }
-

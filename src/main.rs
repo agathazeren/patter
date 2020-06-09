@@ -4,15 +4,15 @@
 #![feature(try_trait)]
 #![cfg_attr(not(test), allow(dead_code))]
 
-mod parse;
 mod context;
+mod parse;
 
 use lazy_static::lazy_static;
 use std::fmt::Debug;
 use std::ops::Try;
 use std::option::NoneError;
 
-use crate::context::{Context, Bindings};
+use crate::context::{Bindings, Context};
 
 #[derive(Clone)]
 pub enum SExpr {
@@ -28,13 +28,11 @@ pub enum SExpr {
     Operation(fn(&mut Context) -> SExpr),
 }
 
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Ident {
     NS(Vec<Ident>),
     Name(String),
 }
-
 
 impl SExpr {
     fn eval(&self, mut cxt: &mut Context) -> SExpr {
@@ -49,7 +47,8 @@ impl SExpr {
                 match ls[0].clone().eval(cxt) {
                     Fun(fun, args_ptn) => {
                         if let Some(bindings) = args_ptn.match_ptn(&List(
-                            ls[1..].iter()
+                            ls[1..]
+                                .iter()
                                 .map(|e| dbg!(dbg!(e).eval(&mut cxt)))
                                 .collect::<Vec<_>>(),
                         )) {
@@ -234,18 +233,14 @@ impl From<NoneError> for SExprError {
     }
 }
 
-fn main() {
-    dbg!(parse::parse(
-        "(#/do/ret-all `(`(#/bind-expr `foo 3) `foo)))"
-    ));
-}
+fn main() {}
 
 lazy_static! {
-    static ref LISPAP_STD: SExpr = parse::parse(
-        &format!("(#/do {})", std::fs::read_to_string("lispap_std/std.lp").unwrap())
-    );
+    static ref LISPAP_STD: SExpr = parse::parse(&format!(
+        "(#/do {})",
+        std::fs::read_to_string("lispap_std/std.lp").unwrap()
+    ));
 }
-        
 
 #[cfg(test)]
 mod tests {
@@ -255,6 +250,22 @@ mod tests {
             #[test]
             fn $name() {
                 assert_eq!(parse::parse($code).eval(&mut Context::new()), $expected);
+            }
+        };
+    }
+
+    macro_rules! eval_test_std {
+        ($name:ident, $code:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let code = List(vec![
+                    Ident(parse::parse_ident("#/do/ret-last").unwrap()),
+                    List(vec![Quote, List(vec![
+                        LISPAP_STD.clone(),
+                        parse::parse($code),
+                    ])])
+                ]);
+                assert_eq!(code.eval(&mut Context::new()), $expected);
             }
         };
     }
@@ -290,5 +301,7 @@ mod tests {
     ])}
     eval_test! {eq, "(#/eq 1 1)", Keyword(super::Ident::Name("true".to_string()))}
     eval_test! {neq, "(#/eq 1 2)", Keyword(super::Ident::Name("false".to_string()))}
-    eval_test! {eq_lists, "(#/eq `(1 2) `(1 `(2 3)))", Keyword(super::Ident::Name("false".to_string()))}
+    eval_test! {eq_lists, "(#/eq `(1 2) `(1 `(2 3)))",
+                Keyword(super::Ident::Name("false".to_string()))}
+    eval_test_std! {uses_std, "std-is-here", Int(42)}
 }
