@@ -1,92 +1,70 @@
-use super::SExpr::*;
+//! each parse_at function should start with the offset pointing to the first character of the thing to be parsed, and should end pointing to the character after the end of the thing to be parsed.
+
 use super::*;
 
-pub fn parse(source: &str) -> SExpr {
-    parse_at(source, &mut 0)
+#[derive(PartialEq, Debug, Clone)]
+pub enum Token {
+    OpenParen,
+    CloseParen,
+    Whitespaces,
+    Word(String),
+    NSOperator,
+    Sigil(String),
+    Num(isize),
 }
 
-fn parse_at(source: &str, mut offset: &mut usize) -> SExpr {
-    let c = source[*offset..].chars().nth(0)?;
-    inc_char_idx(source, &mut offset);
-    let expr = match c {
-        ' ' | '\n' => parse_at(source, offset),
-        '(' => parse_list_at(source, &mut offset),
-        ':' => Keyword(parse_ident_at(source, &mut offset)?),
-        ',' => Place(parse_ident_at(source, &mut offset)?),
-        '`' => List(vec![Quote, parse_at(source, &mut offset)]),
-        c if (c.is_ascii_digit() || c == '-') => {
-            dec_char_idx(source, &mut offset);
-            parse_int_at(source, offset)
-        }
-        c if is_ident_char(c) => {
-            dec_char_idx(source, &mut offset);
-            Ident(parse_ident_at(source, &mut offset)?)
-        }
-        c => CompileError(format!("Unknown character {}", c)),
-    };
-    expr
-}
-
-fn parse_list_at(source: &str, mut offset: &mut usize) -> SExpr {
-    let mut list = Vec::new();
-    loop {
-        if source[*offset..].chars().skip_while(|c| c.is_whitespace()).nth(0)? == ')' {
-            break;
-        }
-        list.push(parse_at(source, &mut offset));
-        inc_char_idx(source, &mut offset);
-    }
-    List(list)
-}
-
-pub fn parse_ident(source: &str) -> Result<super::Ident, SExprError> {
-    parse_ident_at(source, &mut 0)
-}
-
-fn parse_ident_at(source: &str, mut offset: &mut usize) -> Result<super::Ident, SExprError> {
-    let mut names = Vec::new();
-    let mut name = String::new();
-    loop {
-        let c = match source[*offset..].chars().nth(0) {
-            Some(c) => c,
-            None => break,
-        };
-        if c.is_whitespace() {
-            break;
-        }
+pub fn lex(source: &str) -> Vec<Token> {
+    use Token::*;
+    let mut tokens = Vec::new();
+    let mut offset: &mut usize = &mut 0;
+    while let Some(c) = source[*offset..].chars().nth(0) {
         match c {
+            '(' => tokens.push(OpenParen),
+            ')' => tokens.push(CloseParen),
+            w if w.is_whitespace() => {
+                tokens.push(Whitespaces);
+                let mut looped = false;
+                while source[*offset..].chars().nth(0).unwrap().is_whitespace() {
+                    inc_char_idx(source, &mut offset);
+                    looped = true;
+                }
+                if looped {
+                    dec_char_idx(source, &mut offset)
+                }
+            }
+            d if d == '-' || d.is_ascii_digit() => {
+                tokens.push(Num(parse_int_at(source, &mut offset)))
+            }
             c if is_ident_char(c) => {
-                name.push(c);
+                tokens.push(Word(eat_while(is_ident_char, source, &mut offset)));
             }
-            '(' => names.push(parse_ident_at(source, &mut offset)?),
-            ')' => {
-                dec_char_idx(source, &mut offset);
-                break;
+            '/' => tokens.push(NSOperator),
+            s if is_sigil_char(s) => {
+                tokens.push(Sigil(eat_while(is_sigil_char, source, &mut offset)));
             }
-            '/' => {
-                names.push(super::Ident::Name(name));
-                name = String::new();
-            }
-            c => {
-                return Err(format!("Bad char {} in identifier", c).into());
-            }
+            c => panic!("Unknown character {}", c),
         }
         inc_char_idx(source, &mut offset);
+        if *offset > source.len() {
+            break;
+        }
     }
-    Ok(if names.len() == 0 {
-        super::Ident::Name(name)
-    } else {
-        names.push(super::Ident::Name(name));
-        super::Ident::NS(names)
-    })
+    tokens
 }
 
-fn is_ident_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || ['\'', '#', '-', '_'].contains(&c)
+fn eat_while<F: Fn(char) -> bool>(pred: F, source: &str, mut offset: &mut usize) -> String {
+    let start_offset = *offset;
+    while source[*offset..].chars().nth(0).map(&pred) == Some(true) {
+        inc_char_idx(source, &mut offset)
+    }
+    if *offset != start_offset {
+        dec_char_idx(source, &mut offset)
+    }
+    source[start_offset..=*offset].to_string()
 }
 
-fn parse_int_at<'a>(source: &'a str, mut offset: &mut usize) -> SExpr {
-    let negate = source[*offset..].chars().nth(0)? == '-';
+fn parse_int_at(source: &str, mut offset: &mut usize) -> isize {
+    let negate = source[*offset..].chars().nth(0).unwrap() == '-';
     if negate {
         inc_char_idx(source, &mut offset);
     }
@@ -106,8 +84,105 @@ fn parse_int_at<'a>(source: &'a str, mut offset: &mut usize) -> SExpr {
     n_str
         .parse::<usize>()
         .map(|n| if negate { -(n as isize) } else { n as isize })
-        .map(|n| Int(n))
-        .unwrap_or(CompileError(format!("Could not parse number {}", n_str)))
+        .expect("Could not parse a number")
+}
+
+fn is_sigil_char(c: char) -> bool {
+    [
+        '~', '\'', ',', '`', '!', '@', '^', '&', '*', '+', '=', '|', '\\', ':', '>', '<',
+    ]
+    .contains(&c)
+}
+
+pub fn parse(source: &[Token]) -> SExpr {
+    let mut idx = 0;
+    parse_at(source, &mut idx)
+}
+
+fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
+    use Token::*;
+    match &source[*offset] {
+        Whitespaces => {
+            *offset += 1;
+            parse_at(source, offset)
+        }
+        OpenParen => parse_list_at(source, offset),
+        Sigil(s) => {
+            *offset += 1;
+            if source[*offset] != Whitespaces {
+                SExpr::List(vec![SExpr::Sigil(s.to_string()), parse_at(source, offset)])
+            } else {
+                SExpr::Sigil(s.to_string())
+            }
+        }
+        Num(i) => {
+            *offset += 1;
+            SExpr::Int(*i)
+        }
+        Word(_) => SExpr::Ident(parse_ident_at(source, offset)),
+        t => panic!("Unknown token {:?}", t),
+    }
+}
+
+fn parse_list_at(source: &[Token], offset: &mut usize) -> SExpr {
+    use Token::*;
+    assert_eq!(source[*offset], OpenParen);
+    *offset += 1;
+    let mut list = Vec::new();
+    while source[*offset] != CloseParen {
+        list.push(parse_at(source, offset));
+        while *offset < source.len() && source[*offset] == Whitespaces {
+            *offset += 1;
+        }
+        if *offset >= source.len() {
+            panic!("Unclosed list")
+        }
+    }
+    *offset += 1;
+    assert_eq!(source[*offset - 1], CloseParen);
+    SExpr::List(list)
+}
+
+pub fn parse_ident(source: &[Token]) -> super::Ident {
+    parse_ident_at(source, &mut 0)
+}
+
+fn parse_ident_at(source: &[Token], offset: &mut usize) -> super::Ident {
+    use Token::*;
+    let mut names = Vec::new();
+    while let Word(w) = &source[*offset] {
+        if *offset >= source.len() {
+            break;
+        }
+        names.push(w);
+        *offset += 1;
+        if *offset >= source.len() {
+            break;
+        }
+        match source[*offset] {
+            NSOperator => *offset += 1,
+            Whitespaces | CloseParen => {}
+            ref t => panic!(
+                "Illegal Identifier. Got {:?} after {:?}",
+                t.clone(),
+                w.clone()
+            ),
+        }
+    }
+    if names.len() == 1 {
+        super::Ident::Name(names[0].clone())
+    } else {
+        super::Ident::NS(
+            names
+                .into_iter()
+                .map(|n| super::Ident::Name(n.clone()))
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || ['\'', '#', '-', '_', '?'].contains(&c)
 }
 
 fn inc_char_idx(source: &str, idx: &mut usize) {

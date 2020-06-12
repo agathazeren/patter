@@ -13,51 +13,56 @@ pub struct Context {
 #[derive(Clone, Debug)]
 pub struct Bindings(HashMap<Ident, SExpr>);
 
-macro_rules! get {
-    ($ident:expr, $cxt:expr) => {
-        $cxt.lookup(&parse::parse_ident($ident).unwrap()).unwrap()
-    };
-}
-
-macro_rules! primitive {
-    ($name:expr, $ptn:expr, $impl:expr, $cxt:ident) => {
-        Bindings::of(
-            &parse::parse_ident($name).unwrap(),
-            &SExpr::Fun(
-                #[allow(unused_mut)]
-                Box::new(SExpr::Operation(|mut $cxt: &mut Context| {
-                    #[allow(unused_imports)]
-                    use crate::SExpr::*;
-                    $impl
-                })),
-                Box::new(parse::parse($ptn)),
-            ),
-        )
-    };
-}
-
 impl Bindings {
     pub fn join(mut self, other: Bindings) -> Bindings {
         self.0.extend(other.0.into_iter());
         self
     }
 
-    pub fn new() -> Bindings {
+    pub fn empty() -> Bindings {
         Bindings(HashMap::new())
+    }
+
+    pub fn basic() -> Bindings {
+        Bindings(HashMap::new())
+            .join(Bindings::of(
+                &ident!("#/sigil/tick"),
+                &SExpr::NonEvalingFun(
+                    Box::new(SExpr::Operation(|cxt: &mut Context| {
+                        get!("q-expr", cxt).quote(cxt)
+                    })),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!("q-expr"))])),
+                ),
+            ))
+            .join(Bindings::of(
+                &ident!("#/sigil/comma"),
+                &SExpr::NonEvalingFun(
+                    Box::new(SExpr::Operation(|cxt: &mut Context| {
+                        SExpr::Place(get!("ptn-ident", cxt).as_ident().unwrap())
+                    })),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!("ptn-ident"))])),
+                ),
+            ))
+    }
+
+    pub fn new() -> Bindings {
+        Bindings::basic()
             .join(primitive!(
                 "#/add",
-                "(,lhs ,rhs)",
-                Int(get!("lhs", cxt).as_int().unwrap() + get!("rhs", cxt).as_int().unwrap()),
+                "`(,lhs ,rhs)",
+                Int(
+                    get!("lhs", cxt).as_int().unwrap()
+                        + get!("rhs", cxt).as_int().unwrap()
+                ),
                 cxt
             ))
             .join(primitive!(
                 "#/bind-expr",
-                "(,ident ,expr)",
+                "`(,ident ,expr)",
                 {
-                    cxt.bindings.0.insert(
-                        get!("ident", &mut cxt.clone()).as_ident().unwrap(),
-                        get!("expr", &mut cxt.clone()),
-                    );
+                    cxt.bindings
+                        .0
+                        .insert(get!("ident", cxt).as_ident().unwrap(), get!("expr", cxt));
                     List(vec![])
                 },
                 cxt
@@ -66,7 +71,7 @@ impl Bindings {
                 "#/do",
                 ",exprs",
                 {
-                    match get!("exprs", &mut cxt.clone()) {
+                    match get!("exprs", cxt) {
                         List(exprs) => {
                             for expr in exprs {
                                 let _ = expr.eval(&mut cxt);
@@ -80,10 +85,10 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/do/ret-all",
-                "(,exprs)",
+                "`(,exprs)",
                 {
                     let mut results = Vec::new();
-                    match get!("exprs", &mut cxt.clone()) {
+                    match get!("exprs", cxt) {
                         List(exprs) => {
                             for expr in exprs {
                                 results.push(expr.eval(&mut cxt));
@@ -97,10 +102,10 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/do/ret-last",
-                "(,exprs)",
+                "`(,exprs)",
                 {
                     let mut result = List(vec![]);
-                    match get!("exprs", &mut cxt.clone()) {
+                    match get!("exprs", cxt) {
                         List(exprs) => {
                             for expr in exprs {
                                 result = expr.eval(&mut cxt);
@@ -114,9 +119,9 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/eq", //this will probably be not a primitive later
-                "(,lhs ,rhs)",
+                "`(,lhs ,rhs)",
                 {
-                    if get!("lhs", &mut cxt.clone()) == get!("rhs", &mut cxt.clone()) {
+                    if get!("lhs", cxt) == get!("rhs", cxt) {
                         Keyword(crate::Ident::Name("true".to_string()))
                     } else {
                         Keyword(crate::Ident::Name("false".to_string()))
@@ -125,20 +130,29 @@ impl Bindings {
                 cxt
             ))
             .join(primitive!(
-                "#/with",
-                "(,ptn ,expr ,consec ,alt)",
+                "#/with?",
+                "`(,ptn ,expr ,consec ,alt)",
                 {
-                    if let Some(bindings) =
-                        get!("expr", &mut cxt.clone()).match_ptn(&get!("ptn", &mut cxt.clone()))
-                    {
+                    if let Some(bindings) = get!("expr", cxt).match_ptn(&get!("ptn", cxt)) {
                         *cxt = Context {
                             bindings: cxt.bindings.clone().join(bindings),
                             ..*cxt
                         };
-                        get!("consec", &mut cxt.clone()).eval(&mut cxt)
+                        get!("consec", cxt).eval(&mut cxt)
                     } else {
-                        get!("alt", &mut cxt.clone()).eval(&mut cxt)
+                        get!("alt", cxt).eval(&mut cxt)
                     }
+                },
+                cxt
+            ))
+            .join(primitive_noeval!(
+                "#/fun/make",
+                "`(,fun-expr ,args-ptn)",
+                {
+                    Fun(
+                        Box::new(get!("fun-expr", cxt)),
+                        Box::new(get!("args-ptn", cxt).eval(&mut cxt)),
+                    )
                 },
                 cxt
             ))
@@ -150,12 +164,17 @@ impl Bindings {
             m.insert(ident.clone(), value.clone());
             m
         })
-    }
-}
+    }}
 
 impl Context {
     pub fn lookup(&self, ident: &Ident) -> Option<SExpr> {
         self.bindings.0.get(&ident).cloned()
+    }
+
+    pub fn basic() -> Context {
+        Context {
+            bindings: Bindings::basic(),
+        }
     }
 
     pub fn new() -> Context {
