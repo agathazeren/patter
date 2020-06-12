@@ -23,13 +23,13 @@ macro_rules! get {
 macro_rules! primitive {
     ($name:expr, $ptn:expr, $impl:expr, $cxt:ident) => {
         primitive_inner!($name, $ptn, $impl, $cxt, Fun)
-    }
+    };
 }
 
 macro_rules! primitive_noeval {
     ($name:expr, $ptn:expr, $impl:expr, $cxt:ident) => {
         primitive_inner!($name, $ptn, $impl, $cxt, NonEvalingFun)
-    }
+    };
 }
 
 macro_rules! primitive_inner {

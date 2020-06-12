@@ -47,11 +47,11 @@ impl SExpr {
                         if let Some(bindings) = args_ptn.match_ptn(&List(
                             ls[1..].iter().map(|e| e.eval(&mut cxt)).collect::<Vec<_>>(),
                         )) {
-                            *cxt = Context {
-                                bindings: cxt.bindings.clone().join(bindings),
-                                ..*cxt
-                            };
-                            fun.eval(&mut cxt)
+                            cxt.push_scope();
+                            cxt.add_bindings(bindings);
+                            let expr = fun.eval(&mut cxt);
+                            cxt.pop_scope();
+                            expr
                         } else {
                             panic!(
                                 "Arguments ({:?}) did not match for {:?}, requires {:?}",
@@ -63,10 +63,7 @@ impl SExpr {
                     }
                     NonEvalingFun(fun, args_ptn) => {
                         if let Some(bindings) = args_ptn.match_ptn(&List(ls[1..].to_vec())) {
-                            *cxt = Context {
-                                bindings: cxt.bindings.clone().join(bindings),
-                                ..*cxt
-                            };
+                            cxt.add_bindings(bindings);
                             fun.eval(&mut cxt)
                         } else {
                             panic!(
@@ -109,8 +106,9 @@ impl SExpr {
                 }
                 bindings
             }
+            (Int(i1), Int(i2)) if i1 == i2 => Some(Bindings::empty()),
             (Place(id), thing) => Some(Bindings::of(id, thing)),
-            _ => None
+            _ => None,
         }
     }
 
@@ -237,7 +235,17 @@ impl Debug for Ident {
     }
 }
 
-fn main() {}
+fn main() {
+    use SExpr::*;
+    let code = List(vec![
+        Ident(ident!("#/do/ret-last")),
+        List(vec![
+            Sigil("`".to_string()),
+            List(vec![LISPAP_STD.clone(), lispap!("(fib 4)")]),
+        ]),
+    ]);
+    dbg!(code.eval(&mut Context::new()));
+}
 
 lazy_static! {
     static ref LISPAP_STD: SExpr = lispap!(&format!(

@@ -7,6 +7,11 @@ use crate::SExpr;
 
 #[derive(Clone, Debug)]
 pub struct Context {
+    contexts: Vec<ContextInner>,
+}
+
+#[derive(Clone, Debug)]
+struct ContextInner {
     pub bindings: Bindings,
 }
 
@@ -17,6 +22,10 @@ impl Bindings {
     pub fn join(mut self, other: Bindings) -> Bindings {
         self.0.extend(other.0.into_iter());
         self
+    }
+
+    pub fn insert(&mut self, other: Bindings) {
+        self.0.extend(other.0.into_iter());
     }
 
     pub fn empty() -> Bindings {
@@ -50,19 +59,20 @@ impl Bindings {
             .join(primitive!(
                 "#/add",
                 "`(,lhs ,rhs)",
-                Int(
-                    get!("lhs", cxt).as_int().unwrap()
-                        + get!("rhs", cxt).as_int().unwrap()
-                ),
+                Int(dbg!(
+                    dbg!(get!("lhs", cxt).as_int().unwrap())
+                        + dbg!(get!("rhs", cxt).as_int().unwrap())
+                )),
                 cxt
             ))
             .join(primitive!(
                 "#/bind-expr",
                 "`(,ident ,expr)",
                 {
-                    cxt.bindings
-                        .0
-                        .insert(get!("ident", cxt).as_ident().unwrap(), get!("expr", cxt));
+                    cxt.add_super_bindings(Bindings::of(
+                        &get!("ident", cxt).as_ident().unwrap(),
+                        &get!("expr", cxt),
+                    ));
                     List(vec![])
                 },
                 cxt
@@ -129,18 +139,18 @@ impl Bindings {
                 },
                 cxt
             ))
-            .join(primitive!(
+            .join(primitive_noeval!(
                 "#/with?",
                 "`(,ptn ,expr ,consec ,alt)",
                 {
-                    if let Some(bindings) = get!("expr", cxt).match_ptn(&get!("ptn", cxt)) {
-                        *cxt = Context {
-                            bindings: cxt.bindings.clone().join(bindings),
-                            ..*cxt
-                        };
-                        get!("consec", cxt).eval(&mut cxt)
+                    dbg!();
+                    if let Some(bindings) = dbg!(get!("ptn", cxt).eval(&mut cxt))
+                        .match_ptn(&dbg!(get!("expr", cxt).eval(&mut cxt)))
+                    {
+                        cxt.add_bindings(bindings);
+                        dbg!(get!("consec", cxt).eval(&mut cxt))
                     } else {
-                        get!("alt", cxt).eval(&mut cxt)
+                        dbg!(get!("alt", cxt).eval(&mut cxt))
                     }
                 },
                 cxt
@@ -164,22 +174,52 @@ impl Bindings {
             m.insert(ident.clone(), value.clone());
             m
         })
-    }}
+    }
+}
 
 impl Context {
     pub fn lookup(&self, ident: &Ident) -> Option<SExpr> {
-        self.bindings.0.get(&ident).cloned()
+        for cxti in self.contexts.iter().rev() {
+            if let Some(i) = cxti.bindings.0.get(&ident).cloned() {
+                return Some(i);
+            }
+        }
+        None
     }
 
     pub fn basic() -> Context {
         Context {
-            bindings: Bindings::basic(),
+            contexts: vec![ContextInner {
+                bindings: Bindings::basic(),
+            }],
         }
     }
 
     pub fn new() -> Context {
         Context {
-            bindings: Bindings::new(),
+            contexts: vec![ContextInner {
+                bindings: Bindings::new(),
+            }],
         }
+    }
+
+    pub fn add_bindings(&mut self, bindings: Bindings) {
+        self.contexts.last_mut().unwrap().bindings.insert(bindings);
+    }
+
+    pub fn add_super_bindings(&mut self, bindings: Bindings) {
+        assert!(self.contexts.len() >= 2);
+        let idx = self.contexts.len() - 2;
+        self.contexts[idx].bindings.insert(bindings);
+    }
+
+    pub fn push_scope(&mut self) {
+        self.contexts.push(ContextInner{
+            bindings: Bindings::empty(),
+        });
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.contexts.pop();
     }
 }

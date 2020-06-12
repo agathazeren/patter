@@ -5,7 +5,7 @@
 (#/bind-expr `fib (#/fun/make
     (with? 0 n
         0
-        (with? 0 1
+        (with? 1 n
             1
             (#/add
                 (fib (#/add n -1))
