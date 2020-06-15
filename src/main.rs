@@ -36,6 +36,10 @@ pub enum Ident {
 impl SExpr {
     fn eval(&self, mut cxt: &mut Context) -> SExpr {
         use SExpr::*;
+        if false && *self == Ident(ident!("with?")) {
+            dbg!(cxt.clone());
+        }
+        dbg!(self);
         let expr = match self {
             List(ls) => {
                 if ls.is_empty() {
@@ -63,8 +67,11 @@ impl SExpr {
                     }
                     NonEvalingFun(fun, args_ptn) => {
                         if let Some(bindings) = args_ptn.match_ptn(&List(ls[1..].to_vec())) {
+                            cxt.push_scope();
                             cxt.add_bindings(bindings);
-                            fun.eval(&mut cxt)
+                            let expr = fun.eval(&mut cxt);
+                            cxt.pop_scope();
+                            expr
                         } else {
                             panic!(
                                 "Arguments ({:?}) did not match for {:?}, requires {:?}",
@@ -200,7 +207,10 @@ impl Debug for SExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         use SExpr::*;
         match self {
-            List(v) => write!(f, "List({:?})", v),
+            List(v) => {
+                write!(f,"List")?;
+                f.debug_list().entries(v.iter()).finish()
+            }
             Keyword(id) => write!(f, "Keyword({:?})", id),
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
@@ -236,7 +246,8 @@ impl Debug for Ident {
 }
 
 fn main() {
-    use SExpr::*;
+    dbg!(&*LISPAP_STD);
+    /*    use SExpr::*;
     let code = List(vec![
         Ident(ident!("#/do/ret-last")),
         List(vec![
@@ -244,7 +255,8 @@ fn main() {
             List(vec![LISPAP_STD.clone(), lispap!("(fib 4)")]),
         ]),
     ]);
-    dbg!(code.eval(&mut Context::new()));
+    dbg!(code.eval(&mut Context::new())); 
+*/
 }
 
 lazy_static! {
@@ -277,6 +289,7 @@ mod tests {
                         List(vec![LISPAP_STD.clone(), lispap!($code)]),
                     ]),
                 ]);
+                dbg!(&code);
                 assert_eq!(code.eval(&mut Context::new()), $expected);
             }
         };
@@ -306,7 +319,7 @@ mod tests {
             Int(3),
         ]),
     ])}
-    eval_test! {simple_do, "(#/do 1 (#/add 1 2))", List(vec![])}
+    eval_test! {simple_do, "(#/do `(1 (#/add 1 2)))", List(vec![])}
     eval_test! {define_and_use, "(#/do/ret-all `((#/bind-expr `foo 3) foo))", List(vec![
         List(vec![]),
         Int(3)
@@ -317,19 +330,21 @@ mod tests {
                 Keyword(super::Ident::Name("false".to_string()))
     }
     eval_test_std! {uses_std, "std-is-here", Int(42)}
-    eval_test! {define_and_use_multiline, "(#/do/ret-all
-                                               `(
-                                                    (#/bind-expr `foo 3)
-                                                    foo
-                                               )
-                                           )",
-                List(vec![
-                    List(vec![]),
-                    Int(3)
-                ])
+    eval_test! {define_and_use_multiline,
+        "(#/do/ret-all
+            `(
+                (#/bind-expr `foo 3)
+                foo
+            )
+         )",
+         List(vec![
+             List(vec![]),
+             Int(3)
+         ])
     }
     eval_test_std! {fib_in_std, "(fib 4)", Int(3)}
     eval_test! {list_item_after_sublist, "(#/add (#/add 1 2) 3)", Int(6)}
+    eval_test_std! {id_int, "(id 42)", Int(42)}
 
     #[test]
     fn context() {

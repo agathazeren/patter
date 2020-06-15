@@ -56,6 +56,15 @@ impl Bindings {
 
     pub fn new() -> Bindings {
         Bindings::basic()
+            .join(primitive_noeval!(
+                "#/keyword/make",
+                "`(,ident)",
+                Keyword(get!("ident", cxt).as_ident().expect(&format!(
+                    "Keywords can only be created with identifiers, not {:?}",
+                    get!("ident", cxt)
+                ))),
+                cxt
+            ))
             .join(primitive!(
                 "#/add",
                 "`(,lhs ,rhs)",
@@ -79,9 +88,9 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/do",
-                ",exprs",
+                "`(,do-exprs)",
                 {
-                    match get!("exprs", cxt) {
+                    match get!("do-exprs", cxt) {
                         List(exprs) => {
                             for expr in exprs {
                                 let _ = expr.eval(&mut cxt);
@@ -95,10 +104,10 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/do/ret-all",
-                "`(,exprs)",
+                "`(,dra-exprs)",
                 {
                     let mut results = Vec::new();
-                    match get!("exprs", cxt) {
+                    match get!("dra-exprs", cxt) {
                         List(exprs) => {
                             for expr in exprs {
                                 results.push(expr.eval(&mut cxt));
@@ -141,13 +150,16 @@ impl Bindings {
             ))
             .join(primitive_noeval!(
                 "#/with?",
-                "`(,ptn ,expr ,consec ,alt)",
+                "`(,ptn ,expr ,consec ,alt ,scope)",
                 {
-                    dbg!();
                     if let Some(bindings) = dbg!(get!("ptn", cxt).eval(&mut cxt))
                         .match_ptn(&dbg!(get!("expr", cxt).eval(&mut cxt)))
                     {
-                        cxt.add_bindings(bindings);
+                        match get!("scope", cxt).eval(&mut cxt) {
+                            e if e == Keyword(ident!("scoped")) => cxt.add_bindings(bindings),
+                            e if e == Keyword(ident!("super")) => cxt.add_super_bindings(bindings),
+                            e => panic!("Bad scope argument to with: {:?}", e),
+                        }
                         dbg!(get!("consec", cxt).eval(&mut cxt))
                     } else {
                         dbg!(get!("alt", cxt).eval(&mut cxt))
@@ -164,6 +176,23 @@ impl Bindings {
                         Box::new(get!("args-ptn", cxt).eval(&mut cxt)),
                     )
                 },
+                cxt
+            ))
+            .join(primitive_noeval!(
+                "#/fun/make/noeval",
+                "`(,fun-expr ,args-ptn)",
+                {
+                    NonEvalingFun(
+                        Box::new(get!("fun-expr", cxt)),
+                        Box::new(get!("args-ptn", cxt).eval(&mut cxt)),
+                    )
+                },
+                cxt
+            ))
+            .join(primitive!(
+                "#/never",
+                "`()",
+                panic!("reached an unreachable"),
                 cxt
             ))
     }
@@ -214,12 +243,12 @@ impl Context {
     }
 
     pub fn push_scope(&mut self) {
-        self.contexts.push(ContextInner{
+        self.contexts.push(ContextInner {
             bindings: Bindings::empty(),
         });
     }
 
     pub fn pop_scope(&mut self) {
-        self.contexts.pop();
+        dbg!(self.contexts.pop());
     }
 }
