@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::iter::Extend;
 use std::convert::TryInto;
+use std::iter::Extend;
 
 use crate::parse;
 use crate::Ident;
@@ -107,10 +107,14 @@ impl Bindings {
                 "#/with?",
                 "[,ptn ,expr ,consec ,alt ,scope-depth]",
                 {
-                    if let Some(bindings) = dbg!(get!("ptn", cxt))
-                        .match_ptn(&dbg!(get!("expr", cxt)))
+                    if let Some(bindings) =
+                        dbg!(get!("ptn", cxt)).match_ptn(&dbg!(get!("expr", cxt)))
                     {
-                        let depth = get!("scope-depth", cxt).as_int().unwrap().try_into().unwrap();
+                        let depth = get!("scope-depth", cxt)
+                            .as_int()
+                            .unwrap()
+                            .try_into()
+                            .unwrap();
                         cxt.add_bindings_at_depth(bindings, depth);
                         dbg!(get!("consec", cxt).eval(&mut cxt, false))
                     } else {
@@ -134,7 +138,19 @@ impl Bindings {
                 &ident!("#/never"),
                 &SExpr::Operation(|_: &mut Context| {
                     panic!("reached the unreachable");
-                })
+                }),
+            ))
+            .join(primitive!(
+                "#/ptn/union/make",
+                "[,a ,b]",
+                PtnUnion(Box::new(get!("a", cxt)), Box::new(get!("b", cxt))),
+                cxt
+            ))
+            .join(primitive!(
+                "#/ptn/intersection/make",
+                "[,a ,b]",
+                PtnIntersect(Box::new(get!("a",cxt)), Box::new(get!("b", cxt))),
+                cxt
             ))
     }
 
@@ -178,7 +194,10 @@ impl Context {
     }
 
     pub fn add_bindings_at_depth(&mut self, bindings: Bindings, depth: usize) {
-        assert!(self.contexts.len() >= 1 + depth, "Tried to add bindings too deep");
+        assert!(
+            self.contexts.len() >= 1 + depth,
+            "Tried to add bindings too deep"
+        );
         let idx = self.contexts.len() - 1 - depth;
         self.contexts[idx].bindings.insert(bindings);
     }

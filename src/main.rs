@@ -24,6 +24,8 @@ pub enum SExpr {
     Int(isize),
     Operation(fn(&mut Context) -> SExpr),
     Keyword(Ident),
+    PtnUnion(Box<SExpr>, Box<SExpr>),
+    PtnIntersect(Box<SExpr>, Box<SExpr>),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -35,10 +37,7 @@ pub enum Ident {
 impl SExpr {
     fn eval(&self, mut cxt: &mut Context, debug: bool) -> SExpr {
         use SExpr::*;
-        if debug {
-            dbg!(&cxt);
-            dbg!(self);
-        }
+        if debug {}
         let expr = match self {
             List(ls) => {
                 if ls.is_empty() {
@@ -56,7 +55,6 @@ impl SExpr {
                             cxt.push_scope();
                             cxt.add_bindings(bindings);
                             let expr = fun.eval(&mut cxt, debug);
-                            dbg!(&cxt);
                             cxt.pop_scope();
                             expr
                         } else {
@@ -100,15 +98,19 @@ impl SExpr {
                 .unwrap_or_else(|| panic!("Use of undefined sigil {}", s)),
             e => e.clone(),
         };
-        if debug {
-            dbg!(&expr);
-        }
+        if debug {}
         expr
     }
 
     fn match_ptn(&self, expr: &SExpr) -> Option<Bindings> {
         use SExpr::*;
         match (self, expr) {
+            (PtnUnion(a, b), expr) => a
+                .match_ptn(expr)
+                .map(|bind| bind.join(b.match_ptn(expr).unwrap_or(Bindings::empty()))),
+            (PtnIntersect(a, b), expr) => a
+                .match_ptn(expr)
+                .and_then(|bind| b.match_ptn(expr).map(|bind2| bind.join(bind2))),
             (Keyword(id1), Keyword(id2)) | (Ident(id1), Ident(id2)) if *id1 == *id2 => {
                 Some(Bindings::empty())
             }
@@ -213,6 +215,7 @@ impl PartialEq for SExpr {
             }
             (Fun(f0, p0), Fun(f1, p1)) if f0 == f1 && p0 == p1 => true,
             (Int(i0), Int(i1)) if i0 == i1 => true,
+            (PtnUnion(a1,b1), PtnUnion(a2,b2)) if a1 == a2 && b1 == b2 => true,
             _ => false,
         }
     }
@@ -231,6 +234,8 @@ impl Debug for SExpr {
                 .field(sigil)
                 .field(arg)
                 .finish(),
+            PtnUnion(a, b) => f.debug_tuple("PtnUnion").field(a).field(b).finish(),
+            PtnIntersect(a, b) => f.debug_tuple("PtnUnion").field(a).field(b).finish(),
             Keyword(id) => write!(f, "Keyword({:?})", id),
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
@@ -348,6 +353,17 @@ mod tests {
     eval_test! {sq_brkt, "[,foo]", List(vec![Place(ident!("foo"))])}
     eval_test_std! {def, "(def ,foo 123) foo", Int(123)}
     eval_test_std! {std_works, "3", Int(3)}
+    eval_test_std! {sigil_as_value, "(: `foo)", Keyword(ident!("foo"))}
+    eval_test_std! {ptn_union_create, "(~ 4 ,foo)",
+                    PtnUnion(Box::new(Int(4)), Box::new(Place(ident!("foo"))))
+    }
+    eval_test_std! {ptn_intersect, "(with? (^ 4 ,foo) 4 `foo never)", Int(4)}
+    eval_test_std! {ptn_intersect_not_matching,
+                    "(with? (^ 4 ,foo) 5 never unit)",
+                    Keyword(ident!("unit"))
+    }
+
+
     
     #[test]
     fn context() {

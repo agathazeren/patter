@@ -1,7 +1,6 @@
 (#/with? ,unit (#/keyword/make `unit) (#/keyword/make `unit) #/never 1)
 (#/with? ,never #/never unit #/never 1)
 
-
 (#/with? ,def (#/fun/make
     `[
         (#/with? name value unit never 3)
@@ -10,6 +9,9 @@
 ) unit never 1)
 
 (def ,#/sigil/colon #/keyword/make)
+(def ,#/sigil/tilde #/ptn/union/make)
+(def ,#/sigil/carrot #/ptn/intersection/make)
+
 
 (def ,std-is-here 42)
 
