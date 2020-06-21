@@ -26,12 +26,13 @@ macro_rules! primitive {
     };
 }
 
+/*
 macro_rules! primitive_noeval {
     ($name:expr, $ptn:expr, $impl:expr, $cxt:ident) => {
         primitive_inner!($name, $ptn, $impl, $cxt, NonEvalingFun)
     };
 }
-
+*/
 macro_rules! primitive_inner {
     ($name:expr, $ptn:expr, $impl:expr, $cxt:ident, $funty:ident) => {
         Bindings::of(
@@ -43,7 +44,7 @@ macro_rules! primitive_inner {
                     use crate::SExpr::*;
                     $impl
                 })),
-                Box::new(lispap!($ptn).eval(&mut Context::basic())),
+                Box::new(lispap!($ptn).eval(&mut Context::basic(), false)),
             ),
         )
     };

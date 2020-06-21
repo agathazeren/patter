@@ -4,13 +4,19 @@ use super::*;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token {
-    OpenParen,
-    CloseParen,
+    Open(Grouping),
+    Close(Grouping),
     Whitespaces,
     Word(String),
     NSOperator,
     Sigil(String),
     Num(isize),
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum Grouping {
+    Paren,
+    Bracket,
 }
 
 pub fn lex(source: &str) -> Vec<Token> {
@@ -19,8 +25,10 @@ pub fn lex(source: &str) -> Vec<Token> {
     let mut offset: &mut usize = &mut 0;
     while let Some(c) = source[*offset..].chars().nth(0) {
         match c {
-            '(' => tokens.push(OpenParen),
-            ')' => tokens.push(CloseParen),
+            '(' => tokens.push(Open(Grouping::Paren)),
+            ')' => tokens.push(Close(Grouping::Paren)),
+            '[' => tokens.push(Open(Grouping::Bracket)),
+            ']' => tokens.push(Close(Grouping::Bracket)),
             w if w.is_whitespace() => {
                 tokens.push(Whitespaces);
                 let mut looped = false;
@@ -106,11 +114,15 @@ fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
             *offset += 1;
             parse_at(source, offset)
         }
-        OpenParen => parse_list_at(source, offset),
+        Open(Grouping::Paren) => parse_list_at(source, offset, Grouping::Paren),
+        Open(Grouping::Bracket) => SExpr::UnarySigilApp(
+            "[".to_string(),
+            Box::new(parse_list_at(source, offset, Grouping::Bracket)),
+        ),
         Sigil(s) => {
             *offset += 1;
             if source[*offset] != Whitespaces {
-                SExpr::List(vec![SExpr::Sigil(s.to_string()), parse_at(source, offset)])
+                SExpr::UnarySigilApp(s.to_string(), Box::new(parse_at(source, offset)))
             } else {
                 SExpr::Sigil(s.to_string())
             }
@@ -124,12 +136,12 @@ fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
     }
 }
 
-fn parse_list_at(source: &[Token], offset: &mut usize) -> SExpr {
+fn parse_list_at(source: &[Token], offset: &mut usize, grouping: Grouping) -> SExpr {
     use Token::*;
-    assert_eq!(source[*offset], OpenParen);
+    assert_eq!(source[*offset], Open(grouping));
     *offset += 1;
     let mut list = Vec::new();
-    while source[*offset] != CloseParen {
+    while source[*offset] != Close(grouping) {
         list.push(parse_at(source, offset));
         while *offset < source.len() && source[*offset] == Whitespaces {
             *offset += 1;
@@ -139,7 +151,7 @@ fn parse_list_at(source: &[Token], offset: &mut usize) -> SExpr {
         }
     }
     *offset += 1;
-    assert_eq!(source[*offset - 1], CloseParen);
+    assert_eq!(source[*offset - 1], Close(grouping));
     SExpr::List(list)
 }
 
@@ -161,7 +173,7 @@ fn parse_ident_at(source: &[Token], offset: &mut usize) -> super::Ident {
         }
         match source[*offset] {
             NSOperator => *offset += 1,
-            Whitespaces | CloseParen => {}
+            Whitespaces | Close(_) => {}
             ref t => panic!(
                 "Illegal Identifier. Got {:?} after {:?}",
                 t.clone(),

@@ -36,29 +36,45 @@ impl Bindings {
         Bindings(HashMap::new())
             .join(Bindings::of(
                 &ident!("#/sigil/tick"),
-                &SExpr::NonEvalingFun(
+                &SExpr::Fun(
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         get!("q-expr", cxt).quote(cxt)
                     })),
-                    Box::new(SExpr::List(vec![SExpr::Place(ident!("q-expr"))])),
+                    Box::new(SExpr::Place(ident!("q-expr"))),
                 ),
             ))
             .join(Bindings::of(
                 &ident!("#/sigil/comma"),
-                &SExpr::NonEvalingFun(
+                &SExpr::Fun(
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         SExpr::Place(get!("ptn-ident", cxt).as_ident().unwrap())
                     })),
-                    Box::new(SExpr::List(vec![SExpr::Place(ident!("ptn-ident"))])),
+                    Box::new(SExpr::Place(ident!("ptn-ident"))),
+                ),
+            ))
+            .join(Bindings::of(
+                &ident!("#/sigil/bracket"),
+                &SExpr::Fun(
+                    Box::new(SExpr::Operation(|mut cxt: &mut Context| {
+                        SExpr::List(
+                            get!("list", cxt)
+                                .as_list()
+                                .unwrap()
+                                .iter()
+                                .map(|e| e.eval(&mut cxt, false))
+                                .collect::<Vec<_>>(),
+                        )
+                    })),
+                    Box::new(SExpr::Place(ident!("list"))),
                 ),
             ))
     }
 
     pub fn new() -> Bindings {
         Bindings::basic()
-            .join(primitive_noeval!(
+            .join(primitive!(
                 "#/keyword/make",
-                "`(,ident)",
+                ",ident",
                 Keyword(get!("ident", cxt).as_ident().expect(&format!(
                     "Keywords can only be created with identifiers, not {:?}",
                     get!("ident", cxt)
@@ -67,7 +83,7 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/add",
-                "`(,lhs ,rhs)",
+                "[,lhs ,rhs]",
                 Int(dbg!(
                     dbg!(get!("lhs", cxt).as_int().unwrap())
                         + dbg!(get!("rhs", cxt).as_int().unwrap())
@@ -76,7 +92,7 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/bind-expr",
-                "`(,ident ,expr)",
+                "[,ident ,expr]",
                 {
                     cxt.add_super_bindings(Bindings::of(
                         &get!("ident", cxt).as_ident().unwrap(),
@@ -87,58 +103,8 @@ impl Bindings {
                 cxt
             ))
             .join(primitive!(
-                "#/do",
-                "`(,do-exprs)",
-                {
-                    match get!("do-exprs", cxt) {
-                        List(exprs) => {
-                            for expr in exprs {
-                                let _ = expr.eval(&mut cxt);
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                    List(vec![])
-                },
-                cxt
-            ))
-            .join(primitive!(
-                "#/do/ret-all",
-                "`(,dra-exprs)",
-                {
-                    let mut results = Vec::new();
-                    match get!("dra-exprs", cxt) {
-                        List(exprs) => {
-                            for expr in exprs {
-                                results.push(expr.eval(&mut cxt));
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                    List(results)
-                },
-                cxt
-            ))
-            .join(primitive!(
-                "#/do/ret-last",
-                "`(,exprs)",
-                {
-                    let mut result = List(vec![]);
-                    match get!("exprs", cxt) {
-                        List(exprs) => {
-                            for expr in exprs {
-                                result = expr.eval(&mut cxt);
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                    result
-                },
-                cxt
-            ))
-            .join(primitive!(
                 "#/eq", //this will probably be not a primitive later
-                "`(,lhs ,rhs)",
+                "[,lhs ,rhs]",
                 {
                     if get!("lhs", cxt) == get!("rhs", cxt) {
                         Keyword(crate::Ident::Name("true".to_string()))
@@ -148,43 +114,32 @@ impl Bindings {
                 },
                 cxt
             ))
-            .join(primitive_noeval!(
+            .join(primitive!(
                 "#/with?",
-                "`(,ptn ,expr ,consec ,alt ,scope)",
+                "[,ptn ,expr ,consec ,alt ,scope]",
                 {
-                    if let Some(bindings) = dbg!(get!("ptn", cxt).eval(&mut cxt))
-                        .match_ptn(&dbg!(get!("expr", cxt).eval(&mut cxt)))
+                    if let Some(bindings) = dbg!(get!("ptn", cxt).eval(&mut cxt, false))
+                        .match_ptn(&dbg!(get!("expr", cxt).eval(&mut cxt, false)))
                     {
-                        match get!("scope", cxt).eval(&mut cxt) {
+                        match get!("scope", cxt).eval(&mut cxt, false) {
                             e if e == Keyword(ident!("scoped")) => cxt.add_bindings(bindings),
                             e if e == Keyword(ident!("super")) => cxt.add_super_bindings(bindings),
                             e => panic!("Bad scope argument to with: {:?}", e),
                         }
-                        dbg!(get!("consec", cxt).eval(&mut cxt))
+                        dbg!(get!("consec", cxt).eval(&mut cxt, false))
                     } else {
-                        dbg!(get!("alt", cxt).eval(&mut cxt))
+                        dbg!(get!("alt", cxt).eval(&mut cxt, false))
                     }
                 },
                 cxt
             ))
-            .join(primitive_noeval!(
+            .join(primitive!(
                 "#/fun/make",
-                "`(,fun-expr ,args-ptn)",
+                "[,fun-expr ,args-ptn]",
                 {
                     Fun(
                         Box::new(get!("fun-expr", cxt)),
-                        Box::new(get!("args-ptn", cxt).eval(&mut cxt)),
-                    )
-                },
-                cxt
-            ))
-            .join(primitive_noeval!(
-                "#/fun/make/noeval",
-                "`(,fun-expr ,args-ptn)",
-                {
-                    NonEvalingFun(
-                        Box::new(get!("fun-expr", cxt)),
-                        Box::new(get!("args-ptn", cxt).eval(&mut cxt)),
+                        Box::new(get!("args-ptn", cxt)),
                     )
                 },
                 cxt
@@ -195,6 +150,21 @@ impl Bindings {
                 panic!("reached an unreachable"),
                 cxt
             ))
+        /*            .join(primitive!(
+            "#/list",
+            "(#/sigil/tick ,args)",
+            {
+                List(
+                    get!("args", cxt)
+                        .as_list()
+                        .unwrap()
+                        .iter()
+                        .map(|e| dbg!(e.eval(&mut cxt, false)))
+                        .collect::<Vec<_>>(),
+                )
+            },
+            cxt
+        ))*/
     }
 
     pub fn of(ident: &Ident, value: &SExpr) -> Bindings {
@@ -249,6 +219,6 @@ impl Context {
     }
 
     pub fn pop_scope(&mut self) {
-        dbg!(self.contexts.pop());
+        self.contexts.pop();
     }
 }
