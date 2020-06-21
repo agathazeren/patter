@@ -1,27 +1,29 @@
-(#/bind-expr `#/sigil/colon #/keyword/make
-)
-(#/bind-expr `std-is-here 42)
+(#/with? ,unit (#/keyword/make `unit) (#/keyword/make `unit) #/never 1)
+(#/with? ,never #/never unit #/never 1)
 
-(#/bind-expr `unit :unit)
 
-(#/bind-expr `id (#/fun/make
+(#/with? ,def (#/fun/make
+    `[
+        (#/with? name value unit never 3)
+    ]
+    [,name ,value]
+) unit never 1)
+
+(def ,#/sigil/colon #/keyword/make)
+
+(def ,std-is-here 42)
+
+(def ,id (#/fun/make
     `it
     [,it]
 ))
 
-(#/bind-expr `with? (#/fun/make
-    `(#/with? (id ptn) (id expr) conseq alter :scoped)
+(def ,with? (#/fun/make
+    `(#/with? ptn expr conseq alter 0)
     [,ptn ,expr ,conseq ,alter]
 ))
 
-(#/bind-expr `never #/never)
-
-(#/bind-expr `def (#/fun/make
-    `(#/with? name value unit never :super)
-    [,name ,value]
-))
-
-(#/bind-expr `fib (#/fun/make
+(def ,fib (#/fun/make
     `(with? 0 n
         `0
         `(with? 1 n

@@ -36,6 +36,7 @@ impl SExpr {
     fn eval(&self, mut cxt: &mut Context, debug: bool) -> SExpr {
         use SExpr::*;
         if debug {
+            dbg!(&cxt);
             dbg!(self);
         }
         let expr = match self {
@@ -55,6 +56,7 @@ impl SExpr {
                             cxt.push_scope();
                             cxt.add_bindings(bindings);
                             let expr = fun.eval(&mut cxt, debug);
+                            dbg!(&cxt);
                             cxt.pop_scope();
                             expr
                         } else {
@@ -71,7 +73,7 @@ impl SExpr {
             }
             UnarySigilApp(sigil, arg) => {
                 if let Fun(fun, args_ptn) = Sigil(sigil.clone()).eval(&mut cxt, debug) {
-                    if let Some(bindings) = args_ptn.match_ptn(&arg) {
+                    if let Some(bindings) = args_ptn.match_ptn(&List(vec![*arg.clone()])) {
                         cxt.push_scope();
                         cxt.add_bindings(bindings);
                         let expr = fun.eval(&mut cxt, debug);
@@ -105,7 +107,6 @@ impl SExpr {
     }
 
     fn match_ptn(&self, expr: &SExpr) -> Option<Bindings> {
-        println!("Matching {:?} on pattern {:?}", expr, self);
         use SExpr::*;
         match (self, expr) {
             (Keyword(id1), Keyword(id2)) | (Ident(id1), Ident(id2)) if *id1 == *id2 => {
@@ -114,7 +115,7 @@ impl SExpr {
             (Fun(_, _), Fun(_, _)) => None,
             (List(left), List(right)) => {
                 if left.len() != right.len() {
-                    return None
+                    return None;
                 }
                 let mut bindings = Some(Bindings::empty());
                 for (left, right) in left.iter().zip(right.iter()) {
@@ -276,10 +277,8 @@ fn main() {
 }
 
 lazy_static! {
-    static ref LISPAP_STD_STR: String = format!(
-        "{}",
-        std::fs::read_to_string("lispap_std/std.lp").unwrap()
-    );
+    static ref LISPAP_STD_STR: String =
+        format!("{}", std::fs::read_to_string("lispap_std/std.lp").unwrap());
 }
 
 #[cfg(test)]
@@ -299,7 +298,15 @@ mod tests {
             #[test]
             fn $name() {
                 let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, $code));
-                assert_eq!(*code.eval(&mut Context::new(), true).as_list().unwrap().last().unwrap(), $expected);
+                assert_eq!(
+                    *code
+                        .eval(&mut Context::new(), true)
+                        .as_list()
+                        .unwrap()
+                        .last()
+                        .unwrap(),
+                    $expected
+                );
             }
         };
     }
@@ -329,31 +336,19 @@ mod tests {
         ]),
     ])}
     eval_test! {simple_do, "[(#/add 1 2)]", List(vec![Int(3)])}
-    eval_test! {define_and_use, "[(#/bind-expr `foo 3) foo]", List(vec![
-        List(vec![]),
-        Int(3)
-    ])}
     eval_test! {eq, "(#/eq 1 1)", Keyword(super::Ident::Name("true".to_string()))}
     eval_test! {neq, "(#/eq 1 2)", Keyword(super::Ident::Name("false".to_string()))}
     eval_test! {eq_lists, "(#/eq `(1 2) `(1 `(2 3)))",
                 Keyword(super::Ident::Name("false".to_string()))
     }
     eval_test_std! {uses_std, "std-is-here", Int(42)}
-    eval_test! {define_and_use_multiline,
-           "[
-                (#/bind-expr `foo 3)
-                foo
-            ]",
-         List(vec![
-             List(vec![]),
-             Int(3)
-         ])
-    }
     eval_test_std! {fib_in_std, "(fib 4)", Int(3)}
     eval_test! {list_item_after_sublist, "(#/add (#/add 1 2) 3)", Int(6)}
     eval_test_std! {id_int, "(id 42)", Int(42)}
     eval_test! {sq_brkt, "[,foo]", List(vec![Place(ident!("foo"))])}
-
+    eval_test_std! {def, "(def ,foo 123) foo", Int(123)}
+    eval_test_std! {std_works, "3", Int(3)}
+    
     #[test]
     fn context() {
         let _ = Context::new();

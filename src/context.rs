@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::iter::Extend;
+use std::convert::TryInto;
 
 use crate::parse;
 use crate::Ident;
@@ -40,7 +41,7 @@ impl Bindings {
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         get!("q-expr", cxt).quote(cxt)
                     })),
-                    Box::new(SExpr::Place(ident!("q-expr"))),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!("q-expr"))])),
                 ),
             ))
             .join(Bindings::of(
@@ -49,7 +50,7 @@ impl Bindings {
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         SExpr::Place(get!("ptn-ident", cxt).as_ident().unwrap())
                     })),
-                    Box::new(SExpr::Place(ident!("ptn-ident"))),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!("ptn-ident"))])),
                 ),
             ))
             .join(Bindings::of(
@@ -65,7 +66,7 @@ impl Bindings {
                                 .collect::<Vec<_>>(),
                         )
                     })),
-                    Box::new(SExpr::Place(ident!("list"))),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!("list"))])),
                 ),
             ))
     }
@@ -74,7 +75,7 @@ impl Bindings {
         Bindings::basic()
             .join(primitive!(
                 "#/keyword/make",
-                ",ident",
+                "[,ident]",
                 Keyword(get!("ident", cxt).as_ident().expect(&format!(
                     "Keywords can only be created with identifiers, not {:?}",
                     get!("ident", cxt)
@@ -91,18 +92,6 @@ impl Bindings {
                 cxt
             ))
             .join(primitive!(
-                "#/bind-expr",
-                "[,ident ,expr]",
-                {
-                    cxt.add_super_bindings(Bindings::of(
-                        &get!("ident", cxt).as_ident().unwrap(),
-                        &get!("expr", cxt),
-                    ));
-                    List(vec![])
-                },
-                cxt
-            ))
-            .join(primitive!(
                 "#/eq", //this will probably be not a primitive later
                 "[,lhs ,rhs]",
                 {
@@ -116,16 +105,13 @@ impl Bindings {
             ))
             .join(primitive!(
                 "#/with?",
-                "[,ptn ,expr ,consec ,alt ,scope]",
+                "[,ptn ,expr ,consec ,alt ,scope-depth]",
                 {
-                    if let Some(bindings) = dbg!(get!("ptn", cxt).eval(&mut cxt, false))
-                        .match_ptn(&dbg!(get!("expr", cxt).eval(&mut cxt, false)))
+                    if let Some(bindings) = dbg!(get!("ptn", cxt))
+                        .match_ptn(&dbg!(get!("expr", cxt)))
                     {
-                        match get!("scope", cxt).eval(&mut cxt, false) {
-                            e if e == Keyword(ident!("scoped")) => cxt.add_bindings(bindings),
-                            e if e == Keyword(ident!("super")) => cxt.add_super_bindings(bindings),
-                            e => panic!("Bad scope argument to with: {:?}", e),
-                        }
+                        let depth = get!("scope-depth", cxt).as_int().unwrap().try_into().unwrap();
+                        cxt.add_bindings_at_depth(bindings, depth);
                         dbg!(get!("consec", cxt).eval(&mut cxt, false))
                     } else {
                         dbg!(get!("alt", cxt).eval(&mut cxt, false))
@@ -144,27 +130,12 @@ impl Bindings {
                 },
                 cxt
             ))
-            .join(primitive!(
-                "#/never",
-                "`()",
-                panic!("reached an unreachable"),
-                cxt
+            .join(Bindings::of(
+                &ident!("#/never"),
+                &SExpr::Operation(|_: &mut Context| {
+                    panic!("reached the unreachable");
+                })
             ))
-        /*            .join(primitive!(
-            "#/list",
-            "(#/sigil/tick ,args)",
-            {
-                List(
-                    get!("args", cxt)
-                        .as_list()
-                        .unwrap()
-                        .iter()
-                        .map(|e| dbg!(e.eval(&mut cxt, false)))
-                        .collect::<Vec<_>>(),
-                )
-            },
-            cxt
-        ))*/
     }
 
     pub fn of(ident: &Ident, value: &SExpr) -> Bindings {
@@ -203,12 +174,12 @@ impl Context {
     }
 
     pub fn add_bindings(&mut self, bindings: Bindings) {
-        self.contexts.last_mut().unwrap().bindings.insert(bindings);
+        self.add_bindings_at_depth(bindings, 0);
     }
 
-    pub fn add_super_bindings(&mut self, bindings: Bindings) {
-        assert!(self.contexts.len() >= 2);
-        let idx = self.contexts.len() - 2;
+    pub fn add_bindings_at_depth(&mut self, bindings: Bindings, depth: usize) {
+        assert!(self.contexts.len() >= 1 + depth, "Tried to add bindings too deep");
+        let idx = self.contexts.len() - 1 - depth;
         self.contexts[idx].bindings.insert(bindings);
     }
 
