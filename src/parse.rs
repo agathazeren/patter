@@ -25,6 +25,10 @@ pub fn lex(source: &str) -> Vec<Token> {
     let mut offset: &mut usize = &mut 0;
     while let Some(c) = source[*offset..].chars().nth(0) {
         match c {
+            ';' => {
+                let _ = eat_while(|c| c != '\n', source, &mut offset);
+                tokens.push(Whitespaces)
+            }
             '(' => tokens.push(Open(Grouping::Paren)),
             ')' => tokens.push(Close(Grouping::Paren)),
             '[' => tokens.push(Open(Grouping::Bracket)),
