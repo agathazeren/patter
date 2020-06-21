@@ -152,6 +152,14 @@ impl Bindings {
                 PtnIntersect(Box::new(get!("a",cxt)), Box::new(get!("b", cxt))),
                 cxt
             ))
+            .join(primitive!(
+                "#/spread/make",
+                "[,list]",
+                Spread(get!("list", cxt).eval(&mut cxt, false).as_list()
+                       .expect(&format!("#/spread/make can only be called with a list, not {:?}", get!("list", cxt)))),
+                cxt
+            ))
+                    
     }
 
     pub fn of(ident: &Ident, value: &SExpr) -> Bindings {

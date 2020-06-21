@@ -26,6 +26,7 @@ pub enum SExpr {
     Keyword(Ident),
     PtnUnion(Box<SExpr>, Box<SExpr>),
     PtnIntersect(Box<SExpr>, Box<SExpr>),
+    Spread(Vec<SExpr>),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -38,7 +39,9 @@ impl SExpr {
     fn eval(&self, mut cxt: &mut Context, debug: bool) -> SExpr {
         use SExpr::*;
         if debug {}
-        let expr = match self {
+        let mut self_simp = self.clone() ;
+        self_simp.simplify();
+        let mut expr = match self_simp {
             List(ls) => {
                 if ls.is_empty() {
                     return List(ls.to_vec());
@@ -94,11 +97,12 @@ impl SExpr {
                 .unwrap_or_else(|| panic!("Unknown name {:?}", id)),
             Operation(oper) => oper(&mut cxt),
             Sigil(s) => cxt
-                .lookup(&make_sigil_ident(s))
+                .lookup(&make_sigil_ident(&s))
                 .unwrap_or_else(|| panic!("Use of undefined sigil {}", s)),
             e => e.clone(),
         };
         if debug {}
+        expr.simplify();
         expr
     }
 
@@ -135,12 +139,6 @@ impl SExpr {
     }
 
     fn quote(self, mut cxt: &mut Context) -> SExpr {
-        /*        use SExpr::*;
-                match self {
-                    List(ls) => List(ls.iter().map(|e| e.eval(&mut cxt)).collect::<Vec<_>>()),
-                    e => e,
-                }
-        */
         use SExpr::*;
         match self {
             List(ls) => List(
@@ -150,6 +148,26 @@ impl SExpr {
             ),
             e => e,
         }
+    }
+
+    fn simplify(&mut self){
+        use SExpr::*;
+        *self = match &*self {
+            List(ls) => {
+                let mut simp_ls:Vec<SExpr> = Vec::new();
+                for expr in ls {
+                    let mut expr = expr.clone();
+                    expr.simplify();
+                    if let Spread(exprs) = expr {
+                        simp_ls.extend(exprs.into_iter())
+                    } else {
+                        simp_ls.push(expr)
+                    }
+                }
+                List(simp_ls)
+            }
+            e => e.clone()
+        }.clone();
     }
 
     fn as_int(self) -> Option<isize> {
@@ -236,6 +254,10 @@ impl Debug for SExpr {
                 .finish(),
             PtnUnion(a, b) => f.debug_tuple("PtnUnion").field(a).field(b).finish(),
             PtnIntersect(a, b) => f.debug_tuple("PtnUnion").field(a).field(b).finish(),
+            Spread(exprs) => {
+                write!(f, "Spread")?;
+                f.debug_list().entries(exprs.iter()).finish()
+            }
             Keyword(id) => write!(f, "Keyword({:?})", id),
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
@@ -361,6 +383,9 @@ mod tests {
     eval_test_std! {ptn_intersect_not_matching,
                     "(with? (^ 4 ,foo) 5 never unit)",
                     Keyword(ident!("unit"))
+    }
+    eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
+                    List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
     }
 
 

@@ -11,6 +11,7 @@
 (def ,#/sigil/colon #/keyword/make)
 (def ,#/sigil/tilde #/ptn/union/make)
 (def ,#/sigil/carrot #/ptn/intersection/make)
+(def ,#/sigil/amp #/spread/make)
 
 
 (def ,std-is-here 42)
