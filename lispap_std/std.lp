@@ -1,29 +1,53 @@
-(#/with? ,unit (#/keyword/make `unit) (#/keyword/make `unit) #/never 1)
-(#/with? ,never #/never unit #/never 1)
+(#/with? ,unit (#/keyword/make `unit) (#/keyword/make `unit) #/never 2)
+(#/with? ,never #/never unit #/never 2)
 
 (#/with? ,def (#/fun/make
     `[
-        (#/with? name value unit never 3)
+        (#/with? name value unit never 8)
     ]
     [,name ,value]
-) unit never 1)
+) unit never 2)
 
 (def ,#/sigil/colon #/keyword/make)
 (def ,#/sigil/tilde #/ptn/union/make)
 (def ,#/sigil/carrot #/ptn/intersection/make)
 (def ,#/sigil/amp #/spread/make)
 
+; (def ,default-args (#/fun/make
+;     `[
+;         
+;     ]
+;     ,body
+; ))
+
+(def ,list/head #/list/head)
+
+(def ,list/tail #/list/tail)
+
+
+(def ,with? (#/fun/make
+    `(#/with? ptn expr conseq alter 0)
+    [,ptn ,expr ,conseq ,alter]
+))
+
+
+(def ,list/map (#/fun/make
+    `(with? [] map-list
+        []
+        [
+            (trans (list/head map-list))
+            ;&
+           (list/map trans (list/tail map-list))
+        ]
+    )
+    [,trans ,map-list]
+))
 
 (def ,std-is-here 42)
 
 (def ,id (#/fun/make
     `it
     [,it]
-))
-
-(def ,with? (#/fun/make
-    `(#/with? ptn expr conseq alter 0)
-    [,ptn ,expr ,conseq ,alter]
 ))
 
 (def ,fib (#/fun/make

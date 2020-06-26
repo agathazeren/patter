@@ -2,28 +2,38 @@
 //! the goal is the simplest possible implementation, for bootstrapping
 
 #![cfg_attr(not(test), allow(dead_code))]
+#![feature(hash_set_entry)]
 
 #[macro_use]
 mod macros;
 mod context;
+mod intern;
 mod parse;
 
+use itertools::merge;
 use lazy_static::lazy_static;
+
 use std::fmt::Debug;
+use std::iter;
 
 use crate::context::{Bindings, Context};
+use crate::intern::{Interned, Interner};
+
+lazy_static! {
+    static ref IDENTS: Interner<Ident> = Interner::new();
+}
 
 #[derive(Clone)]
 pub enum SExpr {
-    Sigil(String),
+    Sigil(char),
     List(Vec<SExpr>),
-    Ident(Ident),
-    Place(Ident),
-    Fun(Box<SExpr>, Box<SExpr>),
-    UnarySigilApp(String, Box<SExpr>),
+    Ident(Interned<'static, Ident>),
+    Place(Interned<'static, Ident>),
+    Fun(Box<SExpr>, Box<SExpr>, Box<Bindings>),
+    UnarySigilApp(char, Box<SExpr>),
     Int(isize),
     Operation(fn(&mut Context) -> SExpr),
-    Keyword(Ident),
+    Keyword(Interned<'static, Ident>),
     PtnUnion(Box<SExpr>, Box<SExpr>),
     PtnIntersect(Box<SExpr>, Box<SExpr>),
     Spread(Vec<SExpr>),
@@ -36,10 +46,13 @@ pub enum Ident {
 }
 
 impl SExpr {
-    fn eval(&self, mut cxt: &mut Context, debug: bool) -> SExpr {
+    fn eval(&self, mut cxt: &mut Context, #[allow(unused_assignments)] mut debug: bool) -> SExpr {
         use SExpr::*;
-        if debug {}
-        let mut self_simp = self.clone() ;
+        debug = true;
+        if debug {
+            dbg!(self);
+        }
+        let mut self_simp = self.clone();
         self_simp.simplify();
         let mut expr = match self_simp {
             List(ls) => {
@@ -48,7 +61,7 @@ impl SExpr {
                 }
 
                 match ls[0].clone().eval(cxt, debug) {
-                    Fun(fun, args_ptn) => {
+                    Fun(fun, args_ptn, fun_bindings) => {
                         if let Some(bindings) = args_ptn.match_ptn(&List(
                             ls[1..]
                                 .iter()
@@ -56,8 +69,11 @@ impl SExpr {
                                 .collect::<Vec<_>>(),
                         )) {
                             cxt.push_scope();
-                            cxt.add_bindings(bindings);
+                            cxt.add_bindings(&fun_bindings);
+                            cxt.push_scope();
+                            cxt.add_bindings(&bindings);
                             let expr = fun.eval(&mut cxt, debug);
+                            cxt.pop_scope();
                             cxt.pop_scope();
                             expr
                         } else {
@@ -73,11 +89,15 @@ impl SExpr {
                 }
             }
             UnarySigilApp(sigil, arg) => {
-                if let Fun(fun, args_ptn) = Sigil(sigil.clone()).eval(&mut cxt, debug) {
+                if let Fun(fun, args_ptn, fun_bindings) = Sigil(sigil.clone()).eval(&mut cxt, debug)
+                {
                     if let Some(bindings) = args_ptn.match_ptn(&List(vec![*arg.clone()])) {
                         cxt.push_scope();
-                        cxt.add_bindings(bindings);
+                        cxt.add_bindings(&fun_bindings);
+                        cxt.push_scope();
+                        cxt.add_bindings(&bindings);
                         let expr = fun.eval(&mut cxt, debug);
+                        cxt.pop_scope();
                         cxt.pop_scope();
                         expr
                     } else {
@@ -93,11 +113,11 @@ impl SExpr {
                 }
             }
             Ident(id) => cxt
-                .lookup(&id)
+                .lookup(id)
                 .unwrap_or_else(|| panic!("Unknown name {:?}", id)),
             Operation(oper) => oper(&mut cxt),
             Sigil(s) => cxt
-                .lookup(&make_sigil_ident(&s))
+                .lookup(make_sigil_ident(s))
                 .unwrap_or_else(|| panic!("Use of undefined sigil {}", s)),
             e => e.clone(),
         };
@@ -109,16 +129,16 @@ impl SExpr {
     fn match_ptn(&self, expr: &SExpr) -> Option<Bindings> {
         use SExpr::*;
         match (self, expr) {
-            (PtnUnion(a, b), expr) => a
+            (PtnUnion(a, b), expr) => dbg!(a)
                 .match_ptn(expr)
-                .map(|bind| bind.join(b.match_ptn(expr).unwrap_or(Bindings::empty()))),
-            (PtnIntersect(a, b), expr) => a
+                .map(|bind| bind.join(&b.match_ptn(expr).unwrap_or(Bindings::empty()))),
+            (PtnIntersect(a, b), expr) => dbg!(a)
                 .match_ptn(expr)
-                .and_then(|bind| b.match_ptn(expr).map(|bind2| bind.join(bind2))),
+                .and_then(|bind| b.match_ptn(expr).as_ref().map(|bind2| bind.join(bind2))),
             (Keyword(id1), Keyword(id2)) | (Ident(id1), Ident(id2)) if *id1 == *id2 => {
                 Some(Bindings::empty())
             }
-            (Fun(_, _), Fun(_, _)) => None,
+            (Fun(_, _, _), Fun(_, _, _)) => None,
             (List(left), List(right)) => {
                 if left.len() != right.len() {
                     return None;
@@ -126,14 +146,14 @@ impl SExpr {
                 let mut bindings = Some(Bindings::empty());
                 for (left, right) in left.iter().zip(right.iter()) {
                     match left.match_ptn(right) {
-                        Some(bind) => bindings = bindings.map(|b| b.join(bind)),
+                        Some(bind) => bindings = bindings.map(|b| b.join(&bind)),
                         None => bindings = None,
                     }
                 }
                 bindings
             }
             (Int(i1), Int(i2)) if i1 == i2 => Some(Bindings::empty()),
-            (Place(id), thing) => Some(Bindings::of(id, thing)),
+            (Place(id), thing) => Some(Bindings::of(*id, thing)),
             _ => None,
         }
     }
@@ -150,11 +170,11 @@ impl SExpr {
         }
     }
 
-    fn simplify(&mut self){
+    fn simplify(&mut self) {
         use SExpr::*;
         *self = match &*self {
             List(ls) => {
-                let mut simp_ls:Vec<SExpr> = Vec::new();
+                let mut simp_ls: Vec<SExpr> = Vec::new();
                 for expr in ls {
                     let mut expr = expr.clone();
                     expr.simplify();
@@ -166,8 +186,40 @@ impl SExpr {
                 }
                 List(simp_ls)
             }
-            e => e.clone()
-        }.clone();
+            e => e.clone(),
+        }
+        .clone();
+    }
+
+    fn referenced_idents(&self) -> Vec<Interned<'static, Ident>> {
+        let mut idents = self.referenced_idents_inner();
+        idents.dedup();
+        idents
+    }
+
+    fn referenced_idents_inner(&self) -> Vec<Interned<'static, Ident>> {
+        use SExpr::*;
+        match self {
+            Ident(id) | Place(id) | Keyword(id) => vec![*id],
+            Sigil(sig) => vec![make_sigil_ident(*sig)],
+            Fun(a, b, _) | PtnUnion(a, b) | PtnIntersect(a, b) => {
+                merge(a.referenced_idents_inner(), b.referenced_idents_inner()).collect::<Vec<_>>()
+            }
+            UnarySigilApp(sig, arg) => merge(
+                iter::once(make_sigil_ident(*sig)),
+                arg.referenced_idents_inner(),
+            )
+            .collect::<Vec<_>>(),
+            List(ls) | Spread(ls) => {
+                let mut idents = ls
+                    .iter()
+                    .flat_map(Self::referenced_idents_inner)
+                    .collect::<Vec<_>>();
+                idents.sort();
+                idents
+            }
+            Int(_) | Operation(_) => vec![],
+        }
     }
 
     fn as_int(self) -> Option<isize> {
@@ -178,7 +230,7 @@ impl SExpr {
         }
     }
 
-    fn as_ident(self) -> Option<Ident> {
+    fn as_ident(self) -> Option<Interned<'static, Ident>> {
         if let SExpr::Ident(id) = self {
             Some(id)
         } else {
@@ -195,30 +247,27 @@ impl SExpr {
     }
 }
 
-fn make_sigil_ident(sigil: &str) -> Ident {
-    let mut char_names = Vec::new();
-    for char in sigil.chars() {
-        char_names.push(match char {
-            '`' => "tick",
-            ',' => "comma",
-            '~' => "tilde",
-            '!' => "bang",
-            '@' => "at",
-            '^' => "carrot",
-            '&' => "amp",
-            '*' => "star",
-            '+' => "plus",
-            '=' => "eq",
-            '|' => "pike",
-            '\\' => "backslash",
-            ':' => "colon",
-            '<' => "left",
-            '>' => "right",
-            '[' => "bracket", //not really a sigil, but sortof.
-            _ => unreachable!(),
-        })
-    }
-    ident!(&format!("#/sigil/{}", char_names.join("-")))
+fn make_sigil_ident(sigil: char) -> Interned<'static, Ident> {
+    let name = match sigil {
+        '`' => "tick",
+        ',' => "comma",
+        '~' => "tilde",
+        '!' => "bang",
+        '@' => "at",
+        '^' => "carrot",
+        '&' => "amp",
+        '*' => "star",
+        '+' => "plus",
+        '=' => "eq",
+        '|' => "pike",
+        '\\' => "backslash",
+        ':' => "colon",
+        '<' => "left",
+        '>' => "right",
+        '[' => "bracket", //not really a sigil, but sortof.
+        _ => unreachable!(),
+    };
+    ident!(&format!("#/sigil/{}", name))
 }
 
 impl PartialEq for SExpr {
@@ -231,9 +280,9 @@ impl PartialEq for SExpr {
             {
                 true
             }
-            (Fun(f0, p0), Fun(f1, p1)) if f0 == f1 && p0 == p1 => true,
+            (Fun(_, _, _), Fun(_, _, _)) => false,
             (Int(i0), Int(i1)) if i0 == i1 => true,
-            (PtnUnion(a1,b1), PtnUnion(a2,b2)) if a1 == a2 && b1 == b2 => true,
+            (PtnUnion(a1, b1), PtnUnion(a2, b2)) if a1 == a2 && b1 == b2 => true,
             _ => false,
         }
     }
@@ -261,7 +310,7 @@ impl Debug for SExpr {
             Keyword(id) => write!(f, "Keyword({:?})", id),
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
-            Fun(fun, p) => write!(f, "Fun({:?}, {:?})", *fun, *p),
+            Fun(fun, p, _) => write!(f, "Fun({:?}, {:?}, _)", *fun, *p),
             Int(i) => write!(f, "Int({:?})", i),
             Operation(_) => write!(f, "Operation"),
             Sigil(s) => write!(f, "Sigil({})", s),
@@ -291,16 +340,17 @@ impl Debug for Ident {
 }
 
 fn main() {
-    /*    use SExpr::*;
-        let code = List(vec![
-            Ident(ident!("#/do/ret-last")),
-            List(vec![
-                Sigil("`".to_string()),
-                List(vec![LISPAP_STD.clone(), lispap!("(fib 4)")]),
-            ]),
-        ]);
-        dbg!(code.eval(&mut Context::new()));
-    */
+    use SExpr::*;
+    let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, "(fib 5)"));
+    assert_eq!(
+        *code
+            .eval(&mut Context::new(), true)
+            .as_list()
+            .unwrap()
+            .last()
+            .unwrap(),
+        Int(5)
+    );
 }
 
 lazy_static! {
@@ -346,27 +396,24 @@ mod tests {
     eval_test! {neg_number, "-5", Int(-5)}
     eval_test! {one_plus_one, "(#/add 1 1)", Int(2)}
     eval_test! {one_plue_one_plus_one, "(#/add 1 (#/add 1 1))", Int(3)}
-    eval_test! {multiple_levels_ident, "`foo/bar/baz", Ident(super::Ident::NS(vec![
+    eval_test! {multiple_levels_ident, "`foo/bar/baz", Ident(IDENTS.intern(super::Ident::NS(vec![
         super::Ident::Name("foo".to_string()),
         super::Ident::Name("bar".to_string()),
         super::Ident::Name("baz".to_string()),
-    ]))}
+    ])))}
     eval_test! {quote, "`(1 (#/add 2 3))", List(vec![
         Int(1),
         List(vec![
-            Ident(super::Ident::NS(vec![
-                super::Ident::Name("#".to_string()),
-                super::Ident::Name("add".to_string())
-            ])),
+            Ident(ident!("#/add")),
             Int(2),
             Int(3),
         ]),
     ])}
     eval_test! {simple_do, "[(#/add 1 2)]", List(vec![Int(3)])}
-    eval_test! {eq, "(#/eq 1 1)", Keyword(super::Ident::Name("true".to_string()))}
-    eval_test! {neq, "(#/eq 1 2)", Keyword(super::Ident::Name("false".to_string()))}
+    eval_test! {eq, "(#/eq 1 1)", Keyword(ident!("true"))}
+    eval_test! {neq, "(#/eq 1 2)", Keyword(ident!("false"))}
     eval_test! {eq_lists, "(#/eq `(1 2) `(1 `(2 3)))",
-                Keyword(super::Ident::Name("false".to_string()))
+                Keyword(ident!("false"))
     }
     eval_test_std! {uses_std, "std-is-here", Int(42)}
     eval_test_std! {fib_in_std, "(fib 4)", Int(3)}
@@ -387,9 +434,13 @@ mod tests {
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
     }
+    eval_test_std! {map_id, "(list/map id [1 2 3 4 5])",
+                    List(vec![Int(1), Int(2), Int(3), Int(4), Int(5)])
+    }
+    eval_test_std! {tail, "(list/tail [1 2 3])", List(vec!(Int(2), Int(3)))}
+    eval_test_std! {tail_1, "(list/tail [1])", List(vec![])}
+    eval_test_std! {tail_0, "(list/tail [])", List(vec![])}
 
-
-    
     #[test]
     fn context() {
         let _ = Context::new();

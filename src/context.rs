@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::iter::Extend;
 
+use crate::intern::Interned;
 use crate::parse;
 use crate::Ident;
 use crate::SExpr;
@@ -17,11 +18,12 @@ struct ContextInner {
 }
 
 #[derive(Clone, Debug)]
-pub struct Bindings(HashMap<Ident, SExpr>);
+pub struct Bindings(HashMap<Interned<'static, Ident>, SExpr>);
 
 impl Bindings {
-    pub fn join(mut self, other: Bindings) -> Bindings {
-        self.0.extend(other.0.into_iter());
+    pub fn join(mut self, other: &Bindings) -> Bindings {
+        self.0
+            .extend(other.0.iter().map(|(i, e)| (i.clone(), e.clone())));
         self
     }
 
@@ -34,31 +36,33 @@ impl Bindings {
     }
 
     pub fn basic() -> Bindings {
-        Bindings(HashMap::new())
-            .join(Bindings::of(
-                &ident!("#/sigil/tick"),
+        Bindings::empty()
+            .join(&Bindings::of(
+                ident!("#/sigil/tick"),
                 &SExpr::Fun(
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         get!("q-expr", cxt).quote(cxt)
                     })),
                     Box::new(SExpr::List(vec![SExpr::Place(ident!("q-expr"))])),
+                    Box::new(Bindings::empty()),
                 ),
             ))
-            .join(Bindings::of(
-                &ident!("#/sigil/comma"),
+            .join(&Bindings::of(
+                ident!("#/sigil/comma"),
                 &SExpr::Fun(
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         SExpr::Place(get!("ptn-ident", cxt).as_ident().unwrap())
                     })),
                     Box::new(SExpr::List(vec![SExpr::Place(ident!("ptn-ident"))])),
+                    Box::new(Bindings::empty()),
                 ),
             ))
-            .join(Bindings::of(
-                &ident!("#/sigil/bracket"),
+            .join(&Bindings::of(
+                ident!("#/sigil/bracket"),
                 &SExpr::Fun(
                     Box::new(SExpr::Operation(|mut cxt: &mut Context| {
                         SExpr::List(
-                            get!("list", cxt)
+                            get!("brk-list", cxt)
                                 .as_list()
                                 .unwrap()
                                 .iter()
@@ -66,7 +70,8 @@ impl Bindings {
                                 .collect::<Vec<_>>(),
                         )
                     })),
-                    Box::new(SExpr::List(vec![SExpr::Place(ident!("list"))])),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!("brk-list"))])),
+                    Box::new(Bindings::empty()),
                 ),
             ))
     }
@@ -85,10 +90,10 @@ impl Bindings {
             .join(primitive!(
                 "#/add",
                 "[,lhs ,rhs]",
-                Int(dbg!(
-                    dbg!(get!("lhs", cxt).as_int().unwrap())
-                        + dbg!(get!("rhs", cxt).as_int().unwrap())
-                )),
+                Int(get!("lhs", cxt).as_int().unwrap()
+                    + get!("rhs", cxt)
+                        .as_int()
+                        .expect(&format!("Can only add ints, not {:?}", get!("rhs", cxt)))),
                 cxt
             ))
             .join(primitive!(
@@ -96,9 +101,9 @@ impl Bindings {
                 "[,lhs ,rhs]",
                 {
                     if get!("lhs", cxt) == get!("rhs", cxt) {
-                        Keyword(crate::Ident::Name("true".to_string()))
+                        Keyword(ident!("true"))
                     } else {
-                        Keyword(crate::Ident::Name("false".to_string()))
+                        Keyword(ident!("false"))
                     }
                 },
                 cxt
@@ -107,18 +112,16 @@ impl Bindings {
                 "#/with?",
                 "[,ptn ,expr ,consec ,alt ,scope-depth]",
                 {
-                    if let Some(bindings) =
-                        dbg!(get!("ptn", cxt)).match_ptn(&dbg!(get!("expr", cxt)))
-                    {
+                    if let Some(bindings) = get!("ptn", cxt).match_ptn(&get!("expr", cxt)) {
                         let depth = get!("scope-depth", cxt)
                             .as_int()
                             .unwrap()
                             .try_into()
                             .unwrap();
-                        cxt.add_bindings_at_depth(bindings, depth);
-                        dbg!(get!("consec", cxt).eval(&mut cxt, false))
+                        cxt.add_bindings_at_depth(&bindings, depth);
+                        get!("consec", cxt).eval(&mut cxt, false)
                     } else {
-                        dbg!(get!("alt", cxt).eval(&mut cxt, false))
+                        get!("alt", cxt).eval(&mut cxt, false)
                     }
                 },
                 cxt
@@ -126,16 +129,17 @@ impl Bindings {
             .join(primitive!(
                 "#/fun/make",
                 "[,fun-expr ,args-ptn]",
-                {
-                    Fun(
-                        Box::new(get!("fun-expr", cxt)),
-                        Box::new(get!("args-ptn", cxt)),
-                    )
-                },
-                cxt
+                Fun(
+                    Box::new(get!("fun-expr", defn_cxt)),
+                    Box::new(get!("args-ptn", defn_cxt)),
+                    Box::new(defn_cxt.collapse_keeping_sorted(
+                        get!("fun-expr", defn_cxt).referenced_idents()
+                    )),
+                ),
+                defn_cxt
             ))
-            .join(Bindings::of(
-                &ident!("#/never"),
+            .join(&Bindings::of(
+                ident!("#/never"),
                 &SExpr::Operation(|_: &mut Context| {
                     panic!("reached the unreachable");
                 }),
@@ -149,20 +153,46 @@ impl Bindings {
             .join(primitive!(
                 "#/ptn/intersection/make",
                 "[,a ,b]",
-                PtnIntersect(Box::new(get!("a",cxt)), Box::new(get!("b", cxt))),
+                PtnIntersect(Box::new(get!("a", cxt)), Box::new(get!("b", cxt))),
                 cxt
             ))
             .join(primitive!(
                 "#/spread/make",
-                "[,list]",
-                Spread(get!("list", cxt).eval(&mut cxt, false).as_list()
-                       .expect(&format!("#/spread/make can only be called with a list, not {:?}", get!("list", cxt)))),
+                "[,spread-list]",
+                Spread(
+                    get!("spread-list", cxt)
+                        .eval(&mut cxt, false)
+                        .as_list()
+                        .expect(&format!(
+                            "#/spread/make can only be called with a list, not {:?}",
+                            get!("spread-list", cxt)
+                        ))
+                ),
                 cxt
             ))
-                    
+            .join(primitive!(
+                "#/list/head",
+                "[,head-list]",
+                if get!("head-list", cxt).as_list().unwrap().len() < 2 {
+                    List(vec![])
+                } else {
+                    get!("head-list", cxt).as_list().unwrap()[0].clone()
+                },
+                cxt
+            ))
+            .join(primitive!(
+                "#/list/tail",
+                "[,tail-list]",
+                if !get!("tail-list", cxt).as_list().unwrap().is_empty() {
+                    List(get!("tail-list", cxt).as_list().unwrap()[1..].to_vec())
+                } else {
+                    List(vec![])
+                },
+                cxt
+            ))
     }
 
-    pub fn of(ident: &Ident, value: &SExpr) -> Bindings {
+    pub fn of(ident: Interned<'static, Ident>, value: &SExpr) -> Bindings {
         Bindings({
             let mut m = HashMap::new();
             m.insert(ident.clone(), value.clone());
@@ -172,13 +202,21 @@ impl Bindings {
 }
 
 impl Context {
-    pub fn lookup(&self, ident: &Ident) -> Option<SExpr> {
+    pub fn lookup(&self, ident: Interned<'static, Ident>) -> Option<SExpr> {
         for cxti in self.contexts.iter().rev() {
             if let Some(i) = cxti.bindings.0.get(&ident).cloned() {
                 return Some(i);
             }
         }
         None
+    }
+
+    pub fn empty() -> Context {
+        Context {
+            contexts: vec![ContextInner {
+                bindings: Bindings::empty(),
+            }],
+        }
     }
 
     pub fn basic() -> Context {
@@ -197,17 +235,17 @@ impl Context {
         }
     }
 
-    pub fn add_bindings(&mut self, bindings: Bindings) {
+    pub fn add_bindings(&mut self, bindings: &Bindings) {
         self.add_bindings_at_depth(bindings, 0);
     }
 
-    pub fn add_bindings_at_depth(&mut self, bindings: Bindings, depth: usize) {
+    pub fn add_bindings_at_depth(&mut self, bindings: &Bindings, depth: usize) {
         assert!(
             self.contexts.len() >= 1 + depth,
             "Tried to add bindings too deep"
         );
         let idx = self.contexts.len() - 1 - depth;
-        self.contexts[idx].bindings.insert(bindings);
+        self.contexts[idx].bindings.insert(bindings.clone());
     }
 
     pub fn push_scope(&mut self) {
@@ -218,5 +256,33 @@ impl Context {
 
     pub fn pop_scope(&mut self) {
         self.contexts.pop();
+    }
+
+    pub fn push_context(&mut self, context: Context) {
+        for inner in context.contexts {
+            self.add_bindings(&inner.bindings)
+        }
+    }
+
+    pub fn collapse(&self) -> Bindings {
+        let mut collapsed = Bindings::empty();
+        for ContextInner {bindings} in &self.contexts {
+            for (id, val) in &bindings.0 {
+                collapsed.0.insert(*id, val.clone());
+            }
+        }
+        collapsed
+    }
+    
+    pub fn collapse_keeping_sorted(&self, keep: Vec<Interned<'static, Ident>>) -> Bindings {
+        let mut collapsed = Bindings::empty();
+        for ContextInner { bindings } in &self.contexts {
+            for (id, val) in &bindings.0 {
+                if keep.binary_search(&id).is_ok() {
+                    collapsed.0.insert(*id, val.clone());
+                }
+            }
+        }
+        collapsed
     }
 }

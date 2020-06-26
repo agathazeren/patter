@@ -9,7 +9,7 @@ pub enum Token {
     Whitespaces,
     Word(String),
     NSOperator,
-    Sigil(String),
+    Sigil(char),
     Num(isize),
 }
 
@@ -52,7 +52,7 @@ pub fn lex(source: &str) -> Vec<Token> {
             }
             '/' => tokens.push(NSOperator),
             s if is_sigil_char(s) => {
-                tokens.push(Sigil(eat_while(is_sigil_char, source, &mut offset)));
+                tokens.push(Sigil(s));
             }
             c => panic!("Unknown character {}", c),
         }
@@ -120,22 +120,22 @@ fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
         }
         Open(Grouping::Paren) => parse_list_at(source, offset, Grouping::Paren),
         Open(Grouping::Bracket) => SExpr::UnarySigilApp(
-            "[".to_string(),
+            '[',
             Box::new(parse_list_at(source, offset, Grouping::Bracket)),
         ),
         Sigil(s) => {
             *offset += 1;
             if source[*offset] != Whitespaces {
-                SExpr::UnarySigilApp(s.to_string(), Box::new(parse_at(source, offset)))
+                SExpr::UnarySigilApp(*s, Box::new(parse_at(source, offset)))
             } else {
-                SExpr::Sigil(s.to_string())
+                SExpr::Sigil(*s)
             }
         }
         Num(i) => {
             *offset += 1;
             SExpr::Int(*i)
         }
-        Word(_) => SExpr::Ident(parse_ident_at(source, offset)),
+        Word(_) => SExpr::Ident(IDENTS.intern(parse_ident_at(source, offset))),
         t => panic!("Unknown token {:?}", t),
     }
 }

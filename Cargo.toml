@@ -8,3 +8,7 @@ edition = "2018"
 
 [dependencies]
 lazy_static = "1.4"
+itertools = "0.9"
+
+[profile.release]
+debug = true
