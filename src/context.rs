@@ -132,9 +132,11 @@ impl Bindings {
                 Fun(
                     Box::new(get!("fun-expr", defn_cxt)),
                     Box::new(get!("args-ptn", defn_cxt)),
-                    Box::new(defn_cxt.collapse_keeping_sorted(
-                        get!("fun-expr", defn_cxt).referenced_idents()
-                    )),
+                    Box::new(
+                        defn_cxt.collapse_keeping_sorted(
+                            get!("fun-expr", defn_cxt).referenced_idents()
+                        )
+                    ),
                 ),
                 defn_cxt
             ))
@@ -266,14 +268,14 @@ impl Context {
 
     pub fn collapse(&self) -> Bindings {
         let mut collapsed = Bindings::empty();
-        for ContextInner {bindings} in &self.contexts {
+        for ContextInner { bindings } in &self.contexts {
             for (id, val) in &bindings.0 {
                 collapsed.0.insert(*id, val.clone());
             }
         }
         collapsed
     }
-    
+
     pub fn collapse_keeping_sorted(&self, keep: Vec<Interned<'static, Ident>>) -> Bindings {
         let mut collapsed = Bindings::empty();
         for ContextInner { bindings } in &self.contexts {

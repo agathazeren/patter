@@ -165,6 +165,13 @@ pub fn parse_ident(source: &[Token]) -> super::Ident {
 
 fn parse_ident_at(source: &[Token], offset: &mut usize) -> super::Ident {
     use Token::*;
+    let tl_ns = if let NSOperator = source[*offset] {
+        *offset += 1;
+        true
+    } else {
+        false
+    };
+
     let mut names = Vec::new();
     while let Word(w) = &source[*offset] {
         if *offset >= source.len() {
@@ -185,16 +192,7 @@ fn parse_ident_at(source: &[Token], offset: &mut usize) -> super::Ident {
             ),
         }
     }
-    if names.len() == 1 {
-        super::Ident::Name(names[0].clone())
-    } else {
-        super::Ident::NS(
-            names
-                .into_iter()
-                .map(|n| super::Ident::Name(n.clone()))
-                .collect::<Vec<_>>(),
-        )
-    }
+    Ident { names: names.into_iter().cloned().collect::<Vec<String>>(), tl_ns }
 }
 
 fn is_ident_char(c: char) -> bool {

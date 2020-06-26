@@ -40,9 +40,9 @@ pub enum SExpr {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Ident {
-    NS(Vec<Ident>),
-    Name(String),
+pub struct Ident {
+    names: Vec<String>,
+    tl_ns: bool,
 }
 
 impl SExpr {
@@ -320,21 +320,13 @@ impl Debug for SExpr {
 
 impl Debug for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            Ident::Name(n) => write!(f, "{}", n)?,
-            Ident::NS(ns) => {
-                match &ns[0] {
-                    Ident::Name(n) => write!(f, "{}", n),
-                    Ident::NS(ns) => write!(f, "({:?})", ns),
-                }?;
-                for name in ns.iter().skip(1) {
-                    match name {
-                        Ident::Name(n) => write!(f, "/{}", n),
-                        Ident::NS(ns) => write!(f, "/({:?})", ns),
-                    }?;
-                }
-            }
-        };
+        if self.tl_ns {
+            write!(f, "/")?;
+        }
+        write!(f, "{}", self.names[0])?;
+        for name in self.names.iter().skip(1) {
+            write!(f, "/{}", name)?;
+        }
         Ok(())
     }
 }
@@ -396,11 +388,10 @@ mod tests {
     eval_test! {neg_number, "-5", Int(-5)}
     eval_test! {one_plus_one, "(#/add 1 1)", Int(2)}
     eval_test! {one_plue_one_plus_one, "(#/add 1 (#/add 1 1))", Int(3)}
-    eval_test! {multiple_levels_ident, "`foo/bar/baz", Ident(IDENTS.intern(super::Ident::NS(vec![
-        super::Ident::Name("foo".to_string()),
-        super::Ident::Name("bar".to_string()),
-        super::Ident::Name("baz".to_string()),
-    ])))}
+    eval_test! {multiple_levels_ident, "`foo/bar/baz", Ident(IDENTS.intern(crate::Ident{
+        names: vec!["foo".to_string(), "bar".to_string(), "baz".to_string()],
+        tl_ns: false
+    }))}
     eval_test! {quote, "`(1 (#/add 2 3))", List(vec![
         Int(1),
         List(vec![
