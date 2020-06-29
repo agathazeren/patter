@@ -32,8 +32,8 @@
 
 
 (def ,list/map (#/fun/make
-    `(with? []  map-list
-        []
+    `(with? [] map-list
+        `[]
         `[
             (trans (list/head map-list))
             &(list/map trans (list/tail map-list))

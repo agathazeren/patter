@@ -66,7 +66,7 @@ impl Bindings {
                                 .as_list()
                                 .unwrap()
                                 .iter()
-                                .map(|e| e.eval(&mut cxt, false))
+                                .map(|e| e.eval(&mut cxt, true))
                                 .collect::<Vec<_>>(),
                         )
                     })),
@@ -175,7 +175,7 @@ impl Bindings {
             .join(primitive!(
                 "#/list/head",
                 "[,head-list]",
-                if get!("head-list", cxt).as_list().unwrap().len() < 2 {
+                if get!("head-list", cxt).as_list().unwrap().len() < 1 {
                     List(vec![])
                 } else {
                     get!("head-list", cxt).as_list().unwrap()[0].clone()

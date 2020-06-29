@@ -196,7 +196,7 @@ fn parse_ident_at(source: &[Token], offset: &mut usize) -> super::Ident {
 }
 
 fn is_ident_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || ['\'', '#', '-', '_', '?'].contains(&c)
+    c.is_ascii_alphanumeric() || ['\'', '#', '-', '?'].contains(&c)
 }
 
 fn inc_char_idx(source: &str, idx: &mut usize) {

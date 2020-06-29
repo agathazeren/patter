@@ -46,9 +46,8 @@ pub struct Ident {
 }
 
 impl SExpr {
-    fn eval(&self, mut cxt: &mut Context, #[allow(unused_assignments)] mut debug: bool) -> SExpr {
+    fn eval(&self, mut cxt: &mut Context, debug: bool) -> SExpr {
         use SExpr::*;
-        debug = true;
         if debug {
             dbg!(self);
         }
@@ -57,9 +56,8 @@ impl SExpr {
         let mut expr = match self_simp {
             List(ls) => {
                 if ls.is_empty() {
-                    return List(ls.to_vec());
+                    panic!("Tried to evaluate an empty list");
                 }
-
                 match ls[0].clone().eval(cxt, debug) {
                     Fun(fun, args_ptn, fun_bindings) => {
                         if let Some(bindings) = args_ptn.match_ptn(&List(
@@ -119,9 +117,12 @@ impl SExpr {
             Sigil(s) => cxt
                 .lookup(make_sigil_ident(s))
                 .unwrap_or_else(|| panic!("Use of undefined sigil {}", s)),
+            Spread(_) => panic!("tried to eval a spread"),
             e => e.clone(),
         };
-        if debug {}
+        if debug {
+            dbg!(&expr);
+        }
         expr.simplify();
         expr
     }
@@ -383,7 +384,6 @@ mod tests {
     use super::SExpr::*;
     use super::*;
 
-    eval_test! {empty_list, "()", List(vec![])}
     eval_test! {lone_number, "5", Int(5)}
     eval_test! {neg_number, "-5", Int(-5)}
     eval_test! {one_plus_one, "(#/add 1 1)", Int(2)}
@@ -425,12 +425,17 @@ mod tests {
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
     }
+    eval_test_std! {spread_1, "[1 2 &[3]]", lispap!("(1 2 3)")}
     eval_test_std! {map_id, "(list/map id [1 2 3 4 5])",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5)])
     }
+    eval_test_std! {map_id_0, "(list/map id [])", List(vec![])}
+    eval_test_std! {map_id_1, "(list/map id [1])", List(vec![Int(1)])}
+    eval_test_std! {head_1, "(list/head [1])", Int(1)}
     eval_test_std! {tail, "(list/tail [1 2 3])", List(vec!(Int(2), Int(3)))}
     eval_test_std! {tail_1, "(list/tail [1])", List(vec![])}
     eval_test_std! {tail_0, "(list/tail [])", List(vec![])}
+    eval_test_std! {spread_empty, "[1 &[] &[]]", List(vec![Int(1)])}
 
     #[test]
     fn context() {
