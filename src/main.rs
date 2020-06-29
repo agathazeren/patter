@@ -37,6 +37,26 @@ pub enum SExpr {
     PtnUnion(Box<SExpr>, Box<SExpr>),
     PtnIntersect(Box<SExpr>, Box<SExpr>),
     Spread(Vec<SExpr>),
+    Rest(Box<SExpr>),
+    AtPtnTime(Box<SExpr>),
+}
+
+#[derive(PartialEq, Eq)]
+pub enum SExprKind {
+    Sigil,
+    List,
+    Ident,
+    Place,
+    Fun,
+    UnarySigilApp,
+    Int,
+    Operation,
+    Keyword,
+    PtnUnion,
+    PtnIntersect,
+    Spread,
+    Rest,
+    AtPtnTime,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -49,7 +69,7 @@ impl SExpr {
     fn eval(&self, mut cxt: &mut Context, debug: bool) -> SExpr {
         use SExpr::*;
         if debug {
-            dbg!(self);
+            //            dbg!(self);
         }
         let mut self_simp = self.clone();
         self_simp.simplify();
@@ -58,58 +78,18 @@ impl SExpr {
                 if ls.is_empty() {
                     panic!("Tried to evaluate an empty list");
                 }
-                match ls[0].clone().eval(cxt, debug) {
-                    Fun(fun, args_ptn, fun_bindings) => {
-                        if let Some(bindings) = args_ptn.match_ptn(&List(
-                            ls[1..]
-                                .iter()
-                                .map(|e| e.eval(&mut cxt, debug))
-                                .collect::<Vec<_>>(),
-                        )) {
-                            cxt.push_scope();
-                            cxt.add_bindings(&fun_bindings);
-                            cxt.push_scope();
-                            cxt.add_bindings(&bindings);
-                            let expr = fun.eval(&mut cxt, debug);
-                            cxt.pop_scope();
-                            cxt.pop_scope();
-                            expr
-                        } else {
-                            panic!(
-                                "Arguments ({:#?}) did not match for {:?}, requires {:?}",
-                                &ls[1..],
-                                fun,
-                                args_ptn.clone()
-                            )
-                        }
-                    }
-                    e => panic!("{:?} is not callable", e),
-                }
+                ls[0].clone().eval(cxt, debug).call(
+                    ls[1..]
+                        .iter()
+                        .map(|e| e.eval(&mut cxt, debug))
+                        .collect::<Vec<_>>(),
+                    cxt,
+                    debug,
+                )
             }
-            UnarySigilApp(sigil, arg) => {
-                if let Fun(fun, args_ptn, fun_bindings) = Sigil(sigil.clone()).eval(&mut cxt, debug)
-                {
-                    if let Some(bindings) = args_ptn.match_ptn(&List(vec![*arg.clone()])) {
-                        cxt.push_scope();
-                        cxt.add_bindings(&fun_bindings);
-                        cxt.push_scope();
-                        cxt.add_bindings(&bindings);
-                        let expr = fun.eval(&mut cxt, debug);
-                        cxt.pop_scope();
-                        cxt.pop_scope();
-                        expr
-                    } else {
-                        panic!(
-                                "Argument ({:?}) did not match for unary sigil application {:?}, requires {:?}",
-                                arg,
-                                fun,
-                                args_ptn.clone()
-                            )
-                    }
-                } else {
-                    panic!("Cannot use unary application on sigil {:?} that is defined as {:?}, which is not a function.")
-                }
-            }
+            UnarySigilApp(sigil, arg) => Sigil(sigil.clone())
+                .eval(&mut cxt, debug)
+                .call(vec![*arg], cxt, debug),
             Ident(id) => cxt
                 .lookup(id)
                 .unwrap_or_else(|| panic!("Unknown name {:?}", id)),
@@ -117,57 +97,120 @@ impl SExpr {
             Sigil(s) => cxt
                 .lookup(make_sigil_ident(s))
                 .unwrap_or_else(|| panic!("Use of undefined sigil {}", s)),
-            Spread(_) => panic!("tried to eval a spread"),
-            e => e.clone(),
+            e @ Spread(_)
+            | e @ Place(_)
+            | e @ PtnUnion(_, _)
+            | e @ PtnIntersect(_, _)
+            | e @ Fun(_, _, _)
+            | e @ Rest(_)
+            | e @ AtPtnTime(_) => {
+                panic!("Tried to eval {:?}, which is not evaluable.", e)
+            }
+            s @ Int(_) | s @ Keyword(_) => s,
         };
         if debug {
-            dbg!(&expr);
+            //            dbg!(&expr);
         }
         expr.simplify();
         expr
     }
 
     fn match_ptn(&self, expr: &SExpr) -> Option<Bindings> {
+        println!("Matching patter {:?} with {:?}", self, expr);
         use SExpr::*;
-        match (self, expr) {
-            (PtnUnion(a, b), expr) => dbg!(a)
-                .match_ptn(expr)
-                .map(|bind| bind.join(&b.match_ptn(expr).unwrap_or(Bindings::empty()))),
-            (PtnIntersect(a, b), expr) => dbg!(a)
-                .match_ptn(expr)
-                .and_then(|bind| b.match_ptn(expr).as_ref().map(|bind2| bind.join(bind2))),
-            (Keyword(id1), Keyword(id2)) | (Ident(id1), Ident(id2)) if *id1 == *id2 => {
-                Some(Bindings::empty())
+        let bindings = match (self, expr) {
+            (PtnUnion(a, b), expr) => a.match_ptn(expr).map(|bind| {
+                bind.join(&b.match_ptn(expr).unwrap_or(Bindings::empty()))
+            }),
+            (PtnIntersect(a, b), expr) => a.match_ptn(expr).and_then(|bind| {
+                b.match_ptn(expr).as_ref().map(|bind2| bind.join(bind2))
+            }),
+            (Keyword(id1), Keyword(id2)) | (Ident(id1), Ident(id2)) => {
+                if id1 == id2 {
+                    Some(Bindings::empty())
+                } else {
+                    None
+                }
             }
             (Fun(_, _, _), Fun(_, _, _)) => None,
             (List(left), List(right)) => {
-                if left.len() != right.len() {
+                if left.is_empty() ^ right.is_empty() {
                     return None;
                 }
-                let mut bindings = Some(Bindings::empty());
-                for (left, right) in left.iter().zip(right.iter()) {
-                    match left.match_ptn(right) {
-                        Some(bind) => bindings = bindings.map(|b| b.join(&bind)),
-                        None => bindings = None,
-                    }
+                if left.is_empty() && right.is_empty() {
+                    return Some(Bindings::empty());
                 }
-                bindings
+                if let Rest(pat) = &left[0] {
+                    pat.match_ptn(&List(right.clone()))
+                } else {
+                    left[0].match_ptn(&right[0]).and_then(|bind| {
+                        Some(
+                            bind.join(
+                                &List(left[1..].to_vec())
+                                    .match_ptn(&List(right[1..].to_vec()))?,
+                            ),
+                        )
+                    })
+                }
             }
-            (Int(i1), Int(i2)) if i1 == i2 => Some(Bindings::empty()),
+            (AtPtnTime(pat), thing) => {
+                pat.call(vec![], &mut Context::empty(), false).match_ptn(thing)
+            }
+            (Int(i1), Int(i2)) => {
+                if i1 == i2 {
+                    Some(Bindings::empty())
+                } else {
+                    None
+                }
+            }
             (Place(id), thing) => Some(Bindings::of(*id, thing)),
-            _ => None,
-        }
+            (UnarySigilApp(sig, expr), UnarySigilApp(sig2, expr2)) => {
+                if sig == sig2 {
+                    expr.match_ptn(expr2)
+                } else {
+                    None
+                }
+            }
+            (Sigil(sig), Sigil(sig2)) => {
+                if sig == sig2 {
+                    Some(Bindings::empty())
+                } else {
+                    None
+                }
+            }
+            (a, b) if a.kind() != b.kind() => None,
+            (a, b) => panic!("Unhandled pattern match: {:?}, {:?}", a, b),
+        };
+        dbg!(bindings)
     }
 
-    fn quote(self, mut cxt: &mut Context) -> SExpr {
-        use SExpr::*;
-        match self {
-            List(ls) => List(
-                ls.into_iter()
-                    .map(|e| e.quote(&mut cxt))
-                    .collect::<Vec<_>>(),
-            ),
-            e => e,
+    fn call(
+        &self,
+        args: Vec<SExpr>,
+        mut cxt: &mut Context,
+        debug: bool,
+    ) -> SExpr {
+        let (fun, args_ptn, fun_bindings) =
+            if let SExpr::Fun(fun, args_ptn, fun_bindings) = self {
+                (fun, args_ptn, fun_bindings)
+            } else {
+                panic!("{:?} is not callable.", self)
+            };
+        if let Some(bindings) = args_ptn.match_ptn(&SExpr::List(args.clone())) {
+            cxt.push_scope();
+            cxt.add_bindings(&fun_bindings);
+            cxt.push_scope();
+            cxt.add_bindings(&bindings);
+            let expr = fun.eval(&mut cxt, debug);
+            cxt.pop_scope();
+            cxt.pop_scope();
+            expr
+        } else {
+            panic!("Arguments ({:?}) did not match for call of {:?}, requires {:?}",
+                   args,
+                   self,
+                   args_ptn.clone()
+            )
         }
     }
 
@@ -204,8 +247,10 @@ impl SExpr {
             Ident(id) | Place(id) | Keyword(id) => vec![*id],
             Sigil(sig) => vec![make_sigil_ident(*sig)],
             Fun(a, b, _) | PtnUnion(a, b) | PtnIntersect(a, b) => {
-                merge(a.referenced_idents_inner(), b.referenced_idents_inner()).collect::<Vec<_>>()
+                merge(a.referenced_idents_inner(), b.referenced_idents_inner())
+                    .collect::<Vec<_>>()
             }
+            Rest(expr) | AtPtnTime(expr) => expr.referenced_idents_inner(),
             UnarySigilApp(sig, arg) => merge(
                 iter::once(make_sigil_ident(*sig)),
                 arg.referenced_idents_inner(),
@@ -220,6 +265,26 @@ impl SExpr {
                 idents
             }
             Int(_) | Operation(_) => vec![],
+        }
+    }
+
+    fn kind(&self) -> SExprKind {
+        use SExprKind::*;
+        match self {
+            SExpr::Sigil(_) => Sigil,
+            SExpr::List(_) => List,
+            SExpr::Ident(_) => Ident,
+            SExpr::Spread(_) => Spread,
+            SExpr::Place(_) => Place,
+            SExpr::Fun(_, _, _) => Fun,
+            SExpr::UnarySigilApp(_, _) => UnarySigilApp,
+            SExpr::Int(_) => Int,
+            SExpr::Operation(_) => Operation,
+            SExpr::Keyword(_) => Keyword,
+            SExpr::PtnUnion(_, _) => PtnUnion,
+            SExpr::PtnIntersect(_, _) => PtnIntersect,
+            SExpr::Rest(_) => Rest,
+            SExpr::AtPtnTime(_) => AtPtnTime,
         }
     }
 
@@ -242,6 +307,14 @@ impl SExpr {
     fn as_list(self) -> Option<Vec<SExpr>> {
         if let SExpr::List(ls) = self {
             Some(ls)
+        } else {
+            None
+        }
+    }
+
+    fn as_sigil(self) -> Option<char> {
+        if let SExpr::Sigil(sig) = self {
+            Some(sig)
         } else {
             None
         }
@@ -275,22 +348,29 @@ impl PartialEq for SExpr {
     fn eq(&self, other: &SExpr) -> bool {
         use SExpr::*;
         match (self, other) {
-            (List(v0), List(v1)) if v0 == v1 => true,
-            (Keyword(id0), Keyword(id1)) | (Ident(id0), Ident(id1)) | (Place(id0), Place(id1))
-                if id0 == id1 =>
-            {
-                true
-            }
+            (List(v0), List(v1)) => v0 == v1,
+            (Keyword(id0), Keyword(id1))
+            | (Ident(id0), Ident(id1))
+            | (Place(id0), Place(id1)) => id0 == id1,
+
             (Fun(_, _, _), Fun(_, _, _)) => false,
-            (Int(i0), Int(i1)) if i0 == i1 => true,
-            (PtnUnion(a1, b1), PtnUnion(a2, b2)) if a1 == a2 && b1 == b2 => true,
-            _ => false,
+            (Int(i0), Int(i1)) => i0 == i1,
+            (PtnUnion(a1, b1), PtnUnion(a2, b2)) => a1 == a2 && b1 == b2,
+            (UnarySigilApp(sig1, expr1), UnarySigilApp(sig2, expr2)) => {
+                sig1 == sig2 && expr1 == expr2
+            }
+            (Sigil(s1), Sigil(s2)) => s1 == s2,
+            (a, b) if a.kind() != b.kind() => false,
+            (a, b) => panic!("Unhandled equality case: ({:?}, {:?})", a, b),
         }
     }
 }
 
 impl Debug for SExpr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> Result<(), std::fmt::Error> {
         use SExpr::*;
         match self {
             List(v) => {
@@ -302,8 +382,14 @@ impl Debug for SExpr {
                 .field(sigil)
                 .field(arg)
                 .finish(),
-            PtnUnion(a, b) => f.debug_tuple("PtnUnion").field(a).field(b).finish(),
-            PtnIntersect(a, b) => f.debug_tuple("PtnUnion").field(a).field(b).finish(),
+            PtnUnion(a, b) => {
+                f.debug_tuple("PtnUnion").field(a).field(b).finish()
+            }
+            PtnIntersect(a, b) => {
+                f.debug_tuple("PtnUnion").field(a).field(b).finish()
+            }
+            Rest(expr) => f.debug_tuple("Rest").field(expr).finish(),
+            AtPtnTime(expr) => f.debug_tuple("AtPtnTime").field(expr).finish(),
             Spread(exprs) => {
                 write!(f, "Spread")?;
                 f.debug_list().entries(exprs.iter()).finish()
@@ -320,7 +406,10 @@ impl Debug for SExpr {
 }
 
 impl Debug for Ident {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> Result<(), std::fmt::Error> {
         if self.tl_ns {
             write!(f, "/")?;
         }
@@ -333,17 +422,31 @@ impl Debug for Ident {
 }
 
 fn main() {
+    #[allow(unused_imports)]
     use SExpr::*;
-    let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, "(fib 5)"));
-    assert_eq!(
-        *code
+    let lispap_code = "(solidify ,place)";
+    let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, lispap_code));
+    let result = code
+        .eval(&mut Context::new(), true)
+        .as_list()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    /*    dbg!(result.match_ptn({
+            let lispap_code = "(solidify `foo)";
+        let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, lispap_code));
+        let result = code
             .eval(&mut Context::new(), true)
             .as_list()
             .unwrap()
             .last()
-            .unwrap(),
-        Int(5)
-    );
+            .unwrap()
+            .clone();
+        Box::leak(Box::new(result))
+    }));
+     */
+    println!("Result: {:#?}", result);
 }
 
 lazy_static! {
@@ -358,7 +461,10 @@ mod tests {
         ($name:ident, $code:expr, $expected:expr) => {
             #[test]
             fn $name() {
-                assert_eq!(lispap!($code).eval(&mut Context::new(), true), $expected);
+                assert_eq!(
+                    lispap!($code).eval(&mut Context::new(), true),
+                    $expected
+                );
             }
         };
     }
@@ -436,6 +542,12 @@ mod tests {
     eval_test_std! {tail_1, "(list/tail [1])", List(vec![])}
     eval_test_std! {tail_0, "(list/tail [])", List(vec![])}
     eval_test_std! {spread_empty, "[1 &[] &[]]", List(vec![Int(1)])}
+    eval_test_std! {solidify, "(id (id (id (id (id (solidify `foo))))))",
+                    *lispap!(&format!("[{} (solidify `foo)]", *LISPAP_STD_STR))
+                    .eval(&mut Context::new(), false).as_list().unwrap()
+                    .last().unwrap()
+    }
+    eval_test_std! {melt, "(melt (solidify `foo))", Ident(ident!("foo"))}
 
     #[test]
     fn context() {

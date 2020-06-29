@@ -13,17 +13,9 @@
 (def ,#/sigil/carrot #/ptn/intersection/make)
 (def ,#/sigil/amp #/spread/make)
 
-; (def ,default-args (#/fun/make
-;     `[
-;         
-;     ]
-;     ,body
-; ))
-
 (def ,list/head #/list/head)
 
 (def ,list/tail #/list/tail)
-
 
 (def ,with? (#/fun/make
     `(#/with? ptn expr conseq alter 0)
@@ -40,6 +32,16 @@
         ]
     )
     [,trans ,map-list]
+))
+
+(def ,solidify (#/fun/make
+    `[`solidify (#/unary-sigil-app/make `` it)]
+    [,it]
+))
+
+(def ,melt (#/fun/make
+    `ti
+    [(solidify ,ti)]
 ))
 
 (def ,std-is-here 42)

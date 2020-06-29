@@ -13,11 +13,16 @@ pub struct Interner<Element: Eq + Hash> {
 }
 
 impl<'interner, Element: Eq + Hash> Interner<Element> {
-    pub fn intern(&'interner self, element: Element) -> Interned<'interner, Element> {
+    pub fn intern(
+        &'interner self,
+        element: Element,
+    ) -> Interned<'interner, Element> {
         let mut set = self.backing.lock().unwrap();
         let element_ref = set.get_or_insert(Box::new(element));
         // Safety: We never remove elements from the set, and the elements are boxed, so their address is stable.
-        Interned(*unsafe { mem::transmute::<&Box<Element>, &&'interner Element>(element_ref) })
+        Interned(*unsafe {
+            mem::transmute::<&Box<Element>, &&'interner Element>(element_ref)
+        })
     }
 
     pub fn new() -> Interner<Element> {
@@ -51,9 +56,12 @@ impl<'interner, Element: Eq + Hash> Clone for Interned<'interner, Element> {
 
 impl<'interner, Element: Eq + Hash> Copy for Interned<'interner, Element> {}
 
-impl<'interner, Element: Eq + Hash> PartialOrd for Interned<'interner, Element> {
+impl<'interner, Element: Eq + Hash> PartialOrd
+    for Interned<'interner, Element>
+{
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        (self.0 as *const _ as usize).partial_cmp(&(other.0 as *const _ as usize))
+        (self.0 as *const _ as usize)
+            .partial_cmp(&(other.0 as *const _ as usize))
     }
 }
 

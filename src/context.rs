@@ -41,7 +41,7 @@ impl Bindings {
                 ident!("#/sigil/tick"),
                 &SExpr::Fun(
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
-                        get!("q-expr", cxt).quote(cxt)
+                        get!("q-expr", cxt)
                     })),
                     Box::new(SExpr::List(vec![SExpr::Place(ident!("q-expr"))])),
                     Box::new(Bindings::empty()),
@@ -53,7 +53,9 @@ impl Bindings {
                     Box::new(SExpr::Operation(|cxt: &mut Context| {
                         SExpr::Place(get!("ptn-ident", cxt).as_ident().unwrap())
                     })),
-                    Box::new(SExpr::List(vec![SExpr::Place(ident!("ptn-ident"))])),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!(
+                        "ptn-ident"
+                    ))])),
                     Box::new(Bindings::empty()),
                 ),
             ))
@@ -70,7 +72,9 @@ impl Bindings {
                                 .collect::<Vec<_>>(),
                         )
                     })),
-                    Box::new(SExpr::List(vec![SExpr::Place(ident!("brk-list"))])),
+                    Box::new(SExpr::List(vec![SExpr::Place(ident!(
+                        "brk-list"
+                    ))])),
                     Box::new(Bindings::empty()),
                 ),
             ))
@@ -90,7 +94,9 @@ impl Bindings {
             .join(primitive!(
                 "#/add",
                 "[,lhs ,rhs]",
-                Int(get!("lhs", cxt).as_int().unwrap()
+                Int(get!("lhs", cxt)
+                    .as_int()
+                    .expect(&format!("Can only add ints, not {:?}", get!("lhs", cxt)))
                     + get!("rhs", cxt)
                         .as_int()
                         .expect(&format!("Can only add ints, not {:?}", get!("rhs", cxt)))),
@@ -192,6 +198,15 @@ impl Bindings {
                 },
                 cxt
             ))
+            .join(primitive!(
+                "#/unary-sigil-app/make",
+                "[,sigil ,expr]",
+                UnarySigilApp(
+                    get!("sigil", cxt).as_sigil().unwrap(),
+                    Box::new(get!("expr", cxt))
+                ),
+                cxt
+            ))
     }
 
     pub fn of(ident: Interned<'static, Ident>, value: &SExpr) -> Bindings {
@@ -276,7 +291,10 @@ impl Context {
         collapsed
     }
 
-    pub fn collapse_keeping_sorted(&self, keep: Vec<Interned<'static, Ident>>) -> Bindings {
+    pub fn collapse_keeping_sorted(
+        &self,
+        keep: Vec<Interned<'static, Ident>>,
+    ) -> Bindings {
         let mut collapsed = Bindings::empty();
         for ContextInner { bindings } in &self.contexts {
             for (id, val) in &bindings.0 {

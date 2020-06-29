@@ -36,7 +36,8 @@ pub fn lex(source: &str) -> Vec<Token> {
             w if w.is_whitespace() => {
                 tokens.push(Whitespaces);
                 let mut looped = false;
-                while source[*offset..].chars().nth(0).unwrap().is_whitespace() {
+                while source[*offset..].chars().nth(0).unwrap().is_whitespace()
+                {
                     inc_char_idx(source, &mut offset);
                     looped = true;
                 }
@@ -48,7 +49,11 @@ pub fn lex(source: &str) -> Vec<Token> {
                 tokens.push(Num(parse_int_at(source, &mut offset)))
             }
             c if is_ident_char(c) => {
-                tokens.push(Word(eat_while(is_ident_char, source, &mut offset)));
+                tokens.push(Word(eat_while(
+                    is_ident_char,
+                    source,
+                    &mut offset,
+                )));
             }
             '/' => tokens.push(NSOperator),
             s if is_sigil_char(s) => {
@@ -64,7 +69,11 @@ pub fn lex(source: &str) -> Vec<Token> {
     tokens
 }
 
-fn eat_while<F: Fn(char) -> bool>(pred: F, source: &str, mut offset: &mut usize) -> String {
+fn eat_while<F: Fn(char) -> bool>(
+    pred: F,
+    source: &str,
+    mut offset: &mut usize,
+) -> String {
     let start_offset = *offset;
     while source[*offset..].chars().nth(0).map(&pred) == Some(true) {
         inc_char_idx(source, &mut offset)
@@ -101,7 +110,8 @@ fn parse_int_at(source: &str, mut offset: &mut usize) -> isize {
 
 fn is_sigil_char(c: char) -> bool {
     [
-        '~', '\'', ',', '`', '!', '@', '^', '&', '*', '+', '=', '|', '\\', ':', '>', '<',
+        '~', '\'', ',', '`', '!', '@', '^', '&', '*', '+', '=', '|', '\\', ':',
+        '>', '<',
     ]
     .contains(&c)
 }
@@ -140,7 +150,11 @@ fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
     }
 }
 
-fn parse_list_at(source: &[Token], offset: &mut usize, grouping: Grouping) -> SExpr {
+fn parse_list_at(
+    source: &[Token],
+    offset: &mut usize,
+    grouping: Grouping,
+) -> SExpr {
     use Token::*;
     assert_eq!(source[*offset], Open(grouping));
     *offset += 1;
@@ -192,7 +206,10 @@ fn parse_ident_at(source: &[Token], offset: &mut usize) -> super::Ident {
             ),
         }
     }
-    Ident { names: names.into_iter().cloned().collect::<Vec<String>>(), tl_ns }
+    Ident {
+        names: names.into_iter().cloned().collect::<Vec<String>>(),
+        tl_ns,
+    }
 }
 
 fn is_ident_char(c: char) -> bool {
