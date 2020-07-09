@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::fmt;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use std::ops::Deref;
@@ -68,5 +70,11 @@ impl<'interner, Element: Eq + Hash> PartialOrd
 impl<'interner, Element: Eq + Hash> Ord for Interned<'interner, Element> {
     fn cmp(&self, other: &Self) -> Ordering {
         (self.0 as *const _ as usize).cmp(&(other.0 as *const _ as usize))
+    }
+}
+
+impl<'a, T: Eq + Hash + Display> Display for Interned<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
