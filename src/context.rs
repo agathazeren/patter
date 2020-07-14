@@ -132,16 +132,6 @@ impl Bindings {
     pub fn new() -> Bindings {
         Bindings::basic()
             .join(primitive!(
-                "#/keyword/make",
-                "[,ident]",
-                Keyword(get!("ident", cxt).as_ident().expect(&format!(
-                    "Keywords can only be created with identifiers, not {:?}",
-                    get!("ident", cxt)
-                ))),
-                Keyword(cxt(ident!("ident")).unwrap().as_ident().unwrap()),
-                cxt
-            ))
-            .join(primitive!(
                 "#/add",
                 "[,lhs ,rhs]",
                 Int(get!("lhs", cxt)
@@ -156,7 +146,7 @@ impl Bindings {
             .join(primitive!(
                 "#/with?",
                 "[,ptn ,expr ,consec ,alt ,scope-depth]",
-                {
+               {
                     if let Some(bindings) = get!("ptn", cxt).match_ptn(&get!("expr", cxt))? {
                         let depth = get!("scope-depth", cxt)
                             .as_int()

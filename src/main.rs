@@ -28,6 +28,18 @@ lazy_static! {
     static ref IDENTS: Interner<Ident> = Interner::new();
 }
 
+lazy_static! {
+    static ref STD_CXT: Context = {
+        let mut cxt = Context::new();
+        lispap!(&format!("[{}]", *LISPAP_STD_STR))
+            .eval(&mut cxt)
+            .unwrap();
+        dbg!(cxt.lookup(ident!("unit")));
+        cxt
+            
+    };
+}
+
 #[derive(Clone)]
 pub enum SExpr {
     Sigil(char),
@@ -42,7 +54,6 @@ pub enum SExpr {
         evals_to:
             fn(&dyn Fn(Interned<'static, Ident>) -> Option<SExpr>) -> SExpr,
     },
-    Keyword(Interned<'static, Ident>),
     PtnAcc {
         acc: Fun,
         init: Option<Bindings>,
@@ -136,7 +147,7 @@ impl SExpr {
                     throw_interpreter_err!(CannotEvaluate, e);
                     unreachable!();
                 }
-                s @ Int(_) | s @ Keyword(_) => s,
+                s @ Int(_) => s,
             };
             expr.simplify();
             expr
@@ -154,7 +165,7 @@ impl SExpr {
         use SExpr::*;
         let result: Result<Option<Bindings>, InterpreterError> = try {
             match (self, expr) {
-                (Keyword(id1), Keyword(id2)) | (Ident(id1), Ident(id2)) => {
+                (Ident(id1), Ident(id2)) => {
                     if id1 == id2 {
                         Some(Bindings::empty())
                     } else {
@@ -225,13 +236,13 @@ impl SExpr {
                 (a, b) => panic!("Unhandled pattern match: {:?}, {:?}", a, b),
             }
         };
-
+/*
         println!("Matched:");
         println!("Pattern: {:#?}", self);
         println!("Value: {:#?}", expr);
         println!("Result: {:#?}", result);
         println!("=====");
-
+*/
         result.map_err(|mut e| {
             e.callstack.push(format!(
                 "While matching {:#?} against {:#?}",
@@ -275,7 +286,7 @@ impl SExpr {
     fn referenced_idents_inner(&self) -> Vec<Interned<'static, Ident>> {
         use SExpr::*;
         match self {
-            Ident(id) | Place(id) | Keyword(id) => vec![*id],
+            Ident(id) | Place(id) => vec![*id],
             Sigil(sig) => vec![make_sigil_ident(*sig)],
             Fun(crate::Fun {
                 body: a,
@@ -326,7 +337,6 @@ impl SExpr {
             SExpr::UnarySigilApp(_, _) => UnarySigilApp,
             SExpr::Int(_) => Int,
             SExpr::Operation { .. } => Operation,
-            SExpr::Keyword(_) => Keyword,
             SExpr::Rest(_) => Rest,
             SExpr::AtPtnTime(_) => AtPtnTime,
             SExpr::PtnAcc { .. } => PtnAcc,
@@ -426,7 +436,6 @@ impl PartialEq for SExpr {
         use SExpr::*;
         match (self, other) {
             (List(v0), List(v1)) => v0 == v1,
-            (Keyword(id0), Keyword(id1))
             | (Ident(id0), Ident(id1))
             | (Place(id0), Place(id1)) => id0 == id1,
 
@@ -464,7 +473,6 @@ impl Debug for SExpr {
                 write!(f, "Spread")?;
                 f.debug_list().entries(exprs.iter()).finish()
             }
-            Keyword(id) => write!(f, "Keyword({:?})", id),
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
             Fun(fun) => f.debug_tuple("Fun").field(fun).finish(),
@@ -610,10 +618,12 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
     fn into_sexpr(self) -> SExpr {
         match self {
             Some(it) => SExpr::List(vec![
-                SExpr::Keyword(ident!("some")),
+                lispap!(":some").eval(&mut Context::std()).unwrap(),
                 it.into_sexpr(),
             ]),
-            None => SExpr::List(vec![SExpr::Keyword(ident!("none"))]),
+            None => SExpr::List(vec![
+                lispap!(":none").eval(&mut Context::std()).unwrap(),
+            ]),
         }
     }
 }
@@ -633,9 +643,9 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
             )
         }
         let discr = ls[0].clone();
-        Ok(if discr == SExpr::Keyword(ident!("some")) {
+        Ok(if discr == lispap!(":some").eval(&mut Context::std())? {
             Some(T::from_sexpr(ls[1].clone())?)
-        } else if discr == SExpr::Keyword(ident!("none")) {
+        } else if discr == lispap_std!(":none")? {
             None
         } else {
             throw_interpreter_err!(CannotConvert, "Unknonw discriminant", discr)
@@ -735,12 +745,6 @@ mod tests {
         ]),
     ])}
     eval_test! {simple_do, "[(#/add 1 2)]", List(vec![Int(3)])}
-    //    eval_test! {eq, "(eq 1 1)", Keyword(ident!("true"))}
-    //    eval_test! {neq, "(eq 1 2)", Keyword(ident!("false"))}
-    /*    eval_test! {eq_lists, "(eq `(1 2) `(1 `(2 3)))",
-                    Keyword(ident!("false"))
-        }
-    */
     eval_test_std! {uses_std, "std-is-here", Int(42)}
     eval_test_std! {fib_in_std, "(fib 4)", Int(3)}
     eval_test! {list_item_after_sublist, "(#/add (#/add 1 2) 3)", Int(6)}
@@ -748,15 +752,16 @@ mod tests {
     eval_test! {sq_brkt, "[,foo]", List(vec![Place(ident!("foo"))])}
     eval_test_std! {def, "(def ,foo 123) foo", Int(123)}
     eval_test_std! {std_works, "3", Int(3)}
-    eval_test_std! {sigil_as_value, "(: `foo)", Keyword(ident!("foo"))}
+    eval_test_std! {sigil_as_value, "(` `foo)", Ident(ident!("foo"))}
     /*    eval_test_std! {ptn_union_create, "(~ 4 ,foo)",
                         PtnUnion(Box::new(Int(4)), Box::new(Place(ident!("foo"))))
         }
     */
     eval_test_std! {ptn_intersect, "(with? (^ 4 ,foo) 4 `foo never)", Int(4)}
-    eval_test_std! {ptn_intersect_not_matching,
-                    "(with? (^ 4 ,foo) 5 never unit)",
-                    Keyword(ident!("unit"))
+    eval_test_std! {
+        ptn_intersect_not_matching,
+        "(with? (^ 4 ,foo) 5 never unit)",
+        lispap_std!(":()").unwrap()
     }
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
@@ -774,25 +779,33 @@ mod tests {
     eval_test_std! {tail_1, "(list/tail [1])", List(vec![])}
     eval_test_std! {tail_0, "(list/tail [])", List(vec![])}
     eval_test_std! {spread_empty, "[1 &[] &[]]", List(vec![Int(1)])}
-    eval_test_std! {solidify, "(id (id (id (id (id (solidify `foo))))))",
-                    *lispap!(&format!("[{} (solidify `foo)]", *LISPAP_STD_STR))
-                    .eval(&mut Context::new()).unwrap().as_list().unwrap()
-                    .last().unwrap()
+    eval_test_std! {
+        solidify,
+        "(id (id (id (id (id :foo)))))",
+        lispap_std!(":foo").unwrap()
     }
-    eval_test_std! {melt, "(melt (solidify `foo))", Ident(ident!("foo"))}
+    eval_test_std! {melt, "(melt :foo)", Ident(ident!("foo"))}
 /*    eval_test_std! {default_args,
-                    "(def ,foo (#/fun/make `(#/add '0 '1) default-args)) (foo 2 3)",
-                    Int(5)
+                    "(with? default-args [3 5] `(#/add '0 '1) never)",
+                    Int(8)
     }*/
     eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", lispap!("(1 2 3 4 6 7)")}
     eval_test_std! {dedup_bindings, "(list/dedup [[`a 1] [`b 2] [`c 3] [`d 4]])",
                     lispap!("((a 1) (b 2) (c 3) (d 4))")
     }
-    eval_test_std! {contains, "(list/contains [[`a 1]] [`b 2])", Keyword(ident!("false"))}
+    eval_test_std! {
+        contains,
+        "(list/contains [[`a 1]] [`b 2])",
+        lispap_std!(":false").unwrap()
+    }
     eval_test_std! {bindings_join, "(bindings/join [[`a 1] [`b 2]] [[`c 3] [`d 4]])",
                     lispap!("((a 1) (b 2) (c 3) (d 4))")
     }
-    eval_test_std! {match_binding, "(with? [`a 1] [`b 2] :true :false)", Keyword(ident!("false"))}
+    eval_test_std! {
+        match_binding,
+        "(with? [`a 1] [`b 2] :true :false)",
+        lispap_std!(":false").unwrap()
+    }
     eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 never)", Int(1)}
 
     #[test]
@@ -810,7 +823,7 @@ mod tests {
             Bindings::of(ident!("foo"), &SExpr::Int(4)),
         )
     }
-                
+
     #[test]
     fn context() {
         let _ = Context::new();

@@ -1,5 +1,16 @@
-(#/with? ,unit (#/keyword/make `unit) (#/keyword/make `unit) #/never 2)
-(#/with? ,never #/never unit #/never 2)
+(#/with?
+    ,#/sigil/colon
+    (#/fun/make
+        `[`: (#/unary-sigil-app/make `` it)]
+        [,it]
+    )
+    [`: (#/unary-sigil-app/make `` `())]
+    #/never
+    4
+)
+
+(#/with? ,unit :() :() #/never 4)
+(#/with? ,never #/never unit #/never 4)
 
 (#/with? ,def (#/fun/make
     `[
@@ -8,7 +19,6 @@
     [,name ,value]
 ) unit never 2)
 
-(def ,#/sigil/colon #/keyword/make)
 (def ,#/sigil/amp #/spread/make)
 
 (def ,dbg #/dbg)
@@ -33,6 +43,7 @@
     [,ptn ,expr ,conseq]
 ))
 
+; DEPRECATED
 (def ,if (#/fun/make
     `(with? :true cond consec alt)
     [,cond ,consec ,alt]
@@ -135,14 +146,10 @@
 
 (def ,default-args [(rest (at-ptn-time (default-args' 0)))])
 
-(def ,solidify (#/fun/make
-    `[`solidify (#/unary-sigil-app/make `` it)]
-    [,it]
-))
 
 (def ,melt (#/fun/make
     `ti
-    [(solidify ,ti)]
+    [(: ,ti)]
 ))
 
 (def ,std-is-here 42)
