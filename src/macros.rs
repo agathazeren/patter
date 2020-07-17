@@ -7,10 +7,9 @@ macro_rules! lispap {
 
 macro_rules! lispap_std {
     ($code:expr) => {
-        lispap!($code).eval(&mut STD_CXT.clone())
-    }
+        lispap!($code).eval(&mut crate::STD_CXT.clone())
+    };
 }
-        
 
 macro_rules! ident {
     ($ident:expr) => {{

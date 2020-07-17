@@ -2,8 +2,7 @@
 //! the goal is the simplest possible implementation, for bootstrapping
 
 #![cfg_attr(not(test), allow(dead_code))]
-#![feature(hash_set_entry, try_blocks, const_generics)]
-#![allow(incomplete_features)] //const_generics
+#![feature(hash_set_entry, try_blocks, bindings_after_at)]
 
 #[macro_use]
 mod macros;
@@ -34,9 +33,7 @@ lazy_static! {
         lispap!(&format!("[{}]", *LISPAP_STD_STR))
             .eval(&mut cxt)
             .unwrap();
-        dbg!(cxt.lookup(ident!("unit")));
         cxt
-            
     };
 }
 
@@ -59,8 +56,12 @@ pub enum SExpr {
         init: Option<Bindings>,
         pats: Vec<SExpr>,
     },
+    Consecutive(Vec<SExpr>),
     Spread(Vec<SExpr>),
-    Rest(Box<SExpr>),
+    Kleene {
+        start: Box<SExpr>,
+        next: Fun,
+    },
     AtPtnTime(Box<SExpr>),
     LitMatch(Box<SExpr>),
 }
@@ -81,6 +82,8 @@ pub enum SExprKind {
     AtPtnTime,
     PtnAcc,
     LitMatch,
+    Consecutive,
+    Kleene,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -138,11 +141,12 @@ impl SExpr {
                     .lookup(make_sigil_ident(s))
                     .ok_or(interpreter_err!(UndefinedSigil, s))?,
                 e @ Spread(_)
+                | e @ Consecutive(_)
+                | e @ Kleene { .. }
                 | e @ LitMatch(_)
                 | e @ Place(_)
                 | e @ PtnAcc { .. }
                 | e @ Fun(_)
-                | e @ Rest(_)
                 | e @ AtPtnTime(_) => {
                     throw_interpreter_err!(CannotEvaluate, e);
                     unreachable!();
@@ -165,60 +169,92 @@ impl SExpr {
         use SExpr::*;
         let result: Result<Option<Bindings>, InterpreterError> = try {
             match (self, expr) {
-                (Ident(id1), Ident(id2)) => {
-                    if id1 == id2 {
+                (pat, expr) if pat.matches_literally() => {
+                    if pat == expr {
                         Some(Bindings::empty())
                     } else {
                         None
                     }
                 }
-                (Fun(_), Fun(_)) => None,
-                (List(left), List(right)) => {
-                    if left.is_empty() ^ right.is_empty() {
-                        None
-                    } else if left.is_empty() && right.is_empty() {
-                        Some(Bindings::empty())
-                    } else if let Rest(pat) = &left[0] {
-                        pat.match_ptn(&List(right.clone()))?
-                    } else {
+                (List(left), List(right)) => match (&**left, &**right) {
+                    ([], []) => Some(Bindings::empty()),
+                    ([], _) => None,
+                    ([ref pat, ..], []) if pat.matches_singular() => None,
+                    (&[.., ref pat], &[.., ref expr])
+                        if pat.matches_singular() =>
+                    {
                         match (
-                            left[0].match_ptn(&right[0])?,
-                            List(left[1..].to_vec())
-                                .match_ptn(&List(right[1..].to_vec()))?,
+                            pat.match_ptn(&expr)?,
+                            List(left[..(left.len() - 1)].to_vec()).match_ptn(
+                                &List(right[..(right.len() - 1)].to_vec()),
+                            )?,
                         ) {
-                            (Some(a), Some(b)) => Some(a.join(&b)),
+                            (Some(left_binds), Some(right_binds)) => {
+                                Some(left_binds.join(&right_binds))
+                            }
                             _ => None,
                         }
                     }
-                }
+                    (&[ref pat, ..], &[ref expr, ..])
+                        if pat.matches_singular() =>
+                    {
+                        match (
+                            pat.match_ptn(&expr)?,
+                            List(left[1..].to_vec())
+                                .match_ptn(&List(right[1..].to_vec()))?,
+                        ) {
+                            (Some(left_binds), Some(right_binds)) => {
+                                Some(left_binds.join(&right_binds))
+                            }
+                            _ => None,
+                        }
+                    }
+                    (left @ [Kleene{ start, next }, ..], exprs) => {
+                        println!("Matching against a kleene: {:?}", exprs);
+                        let mut out_binds = Some(Bindings::basic()); //dbg
+                        let mut pats = start.clone().as_list().unwrap();
+                        for i in (pats.len())..=exprs.len() {
+                            debug_assert!(pats.len() == i);
+                            println!("Pats: {:?}", pats);
+                            // this is wrong for kleenes of consecs or kleens
+                            if let (Some(left), Some(right)) =  (
+                                List(pats.clone()).match_ptn(
+                                    &List(exprs[..i].to_vec())
+                                )?,
+                                List(left[1..].to_vec())
+                                    .match_ptn(&List(exprs[i..].to_vec()))?
+                            ) {
+                                out_binds = Some(left.join(&right));
+                            }
+                            pats.push(next.call(
+                                vec![List(pats.clone())],
+                                &mut Context::empty()
+                            )?);
+                        }
+                        dbg!(out_binds)
+                    }
+                    (left @ [Consecutive(pats),..], exprs) => {
+                        match (
+                            List(pats.to_vec()).match_ptn(&List(exprs[..pats.len()].to_vec()))?,
+                            List(left[1..].to_vec()).match_ptn(&List(exprs[pats.len()..].to_vec()))?,
+                        ){
+                            (Some(left), Some(right)) => Some(left.join(&right)),
+                            _ => None
+                        }
+                    }
+                    (pats, exprs) => panic!(
+                        "Failed to handle pattern match on List{:?} of List{:?}",
+                        pats, exprs
+                    ),
+                },
+                (List(_), _) => None,
                 (AtPtnTime(pat), thing) => pat
                     .clone()
                     .as_fun()
                     .ok_or(interpreter_err!(CannotCall, *pat.clone()))?
                     .call(vec![], &mut Context::empty())?
                     .match_ptn(thing)?,
-                (Int(i1), Int(i2)) => {
-                    if i1 == i2 {
-                        Some(Bindings::empty())
-                    } else {
-                        None
-                    }
-                }
                 (Place(id), thing) => Some(Bindings::of(*id, thing)),
-                (UnarySigilApp(sig, expr), UnarySigilApp(sig2, expr2)) => {
-                    if sig == sig2 {
-                        expr.match_ptn(expr2)?
-                    } else {
-                        None
-                    }
-                }
-                (Sigil(sig), Sigil(sig2)) => {
-                    if sig == sig2 {
-                        Some(Bindings::empty())
-                    } else {
-                        None
-                    }
-                }
                 (PtnAcc { acc, init, pats }, expr) => {
                     let mut bindings = init.clone();
                     for pat in pats {
@@ -232,17 +268,24 @@ impl SExpr {
                     }
                     bindings
                 }
-                (a, b) if a.kind() != b.kind() => None,
+                (UnarySigilApp(l_sig, l_arg), UnarySigilApp(r_sig, r_arg)) => {
+                    if l_sig == r_sig {
+                        l_arg.match_ptn(r_arg)?
+                    } else {
+                        None
+                    }
+                }
+                (UnarySigilApp(_,_), _) => None,
                 (a, b) => panic!("Unhandled pattern match: {:?}, {:?}", a, b),
             }
         };
-/*
-        println!("Matched:");
-        println!("Pattern: {:#?}", self);
-        println!("Value: {:#?}", expr);
-        println!("Result: {:#?}", result);
-        println!("=====");
-*/
+        /*
+                println!("Matched:");
+                println!("Pattern: {:#?}", self);
+                println!("Value: {:#?}", expr);
+                println!("Result: {:#?}", result);
+                println!("=====");
+        */
         result.map_err(|mut e| {
             e.callstack.push(format!(
                 "While matching {:#?} against {:#?}",
@@ -250,6 +293,41 @@ impl SExpr {
             ));
             e
         })
+    }
+
+    fn matches_singular(&self) -> bool {
+        use SExpr::*;
+        match self {
+            Sigil(_)
+            | Ident(_)
+            | LitMatch(_)
+            | List(_)
+            | Place(_)
+            | Fun(_)
+            | UnarySigilApp(_, _)
+            | Int(_)
+            | Operation { .. } => true,
+            PtnAcc { pats, .. } => pats.iter().all(|p| p.matches_singular()),
+            Consecutive(_) | Kleene { .. } | AtPtnTime(_) => false,
+            Spread(_) => unreachable!(),
+        }
+    }
+
+    fn matches_literally(&self) -> bool {
+        use SExpr::*;
+        match self {
+            Sigil(_) | Ident(_) | Int(_) | Operation { .. } => true,
+            List(ls) => ls.iter().all(|e| e.matches_literally()),
+            Place(_)
+            | Fun(_)
+            | UnarySigilApp(_, _)
+            | PtnAcc { .. }
+            | Consecutive(_)
+            | Kleene { .. }
+            | AtPtnTime(_)
+            | LitMatch(_) => false,
+            Spread(_) => unreachable!(),
+        }
     }
 
     fn evals_to(&self) -> SExpr {
@@ -296,15 +374,13 @@ impl SExpr {
                 merge(a.referenced_idents_inner(), b.referenced_idents_inner())
                     .collect::<Vec<_>>()
             }
-            LitMatch(expr) | Rest(expr) | AtPtnTime(expr) => {
-                expr.referenced_idents_inner()
-            }
+            LitMatch(expr) | AtPtnTime(expr) => expr.referenced_idents_inner(),
             UnarySigilApp(sig, arg) => merge(
                 iter::once(make_sigil_ident(*sig)),
                 arg.referenced_idents_inner(),
             )
             .collect::<Vec<_>>(),
-            List(ls) | Spread(ls) => {
+            List(ls) | Spread(ls) | Consecutive(ls) => {
                 let mut idents = ls
                     .iter()
                     .flat_map(Self::referenced_idents_inner)
@@ -315,12 +391,18 @@ impl SExpr {
             PtnAcc { acc, pats, init } => merge(
                 Fun(acc.clone()).referenced_idents_inner(),
                 merge(
-                    init.clone().map(|b|b.referenced_idents_sorted()).unwrap_or(Vec::new()),
+                    init.clone()
+                        .map(|b| b.referenced_idents_sorted())
+                        .unwrap_or(Vec::new()),
                     List(pats.to_vec()).referenced_idents_inner(),
                 ),
             )
             .collect::<Vec<_>>(),
-
+            Kleene { start, next } => merge(
+                start.referenced_idents_inner(),
+                Fun(next.clone()).referenced_idents_inner(),
+            )
+            .collect(),
             Int(_) | Operation { .. } => vec![],
         }
     }
@@ -337,10 +419,11 @@ impl SExpr {
             SExpr::UnarySigilApp(_, _) => UnarySigilApp,
             SExpr::Int(_) => Int,
             SExpr::Operation { .. } => Operation,
-            SExpr::Rest(_) => Rest,
             SExpr::AtPtnTime(_) => AtPtnTime,
             SExpr::PtnAcc { .. } => PtnAcc,
             SExpr::LitMatch(_) => LitMatch,
+            SExpr::Consecutive(_) => Consecutive,
+            SExpr::Kleene { .. } => Kleene,
         }
     }
 
@@ -379,6 +462,14 @@ impl SExpr {
     fn as_fun(self) -> Option<Fun> {
         if let SExpr::Fun(fun) = self {
             Some(fun)
+        } else {
+            None
+        }
+    }
+
+    fn as_solidified(self) -> Option<SExpr> {
+        if let SExpr::UnarySigilApp(':', thing) = self {
+            Some(*thing)
         } else {
             None
         }
@@ -436,8 +527,7 @@ impl PartialEq for SExpr {
         use SExpr::*;
         match (self, other) {
             (List(v0), List(v1)) => v0 == v1,
-            | (Ident(id0), Ident(id1))
-            | (Place(id0), Place(id1)) => id0 == id1,
+            (Ident(id0), Ident(id1)) | (Place(id0), Place(id1)) => id0 == id1,
 
             (Fun(_), Fun(_)) => false,
             (Int(i0), Int(i1)) => i0 == i1,
@@ -467,7 +557,6 @@ impl Debug for SExpr {
                 .field(sigil)
                 .field(arg)
                 .finish(),
-            Rest(expr) => f.debug_tuple("Rest").field(expr).finish(),
             AtPtnTime(expr) => f.debug_tuple("AtPtnTime").field(expr).finish(),
             Spread(exprs) => {
                 write!(f, "Spread")?;
@@ -486,6 +575,15 @@ impl Debug for SExpr {
                 .field("pats", pats)
                 .finish(),
             LitMatch(expr) => f.debug_tuple("LitMatch").field(expr).finish(),
+            Consecutive(exprs) => {
+                write!(f, "Consecutive")?;
+                f.debug_list().entries(exprs.iter()).finish()
+            }
+            Kleene { start, next } => f
+                .debug_struct("Kleene")
+                .field("start", start)
+                .field("next", next)
+                .finish(),
         }
     }
 }
@@ -578,39 +676,51 @@ impl FromSExpr for Fun {
 
 impl FromSExpr for Bindings {
     fn from_sexpr(expr: SExpr) -> Result<Bindings, InterpreterError> {
-        Ok(Bindings::of_contents(
-            expr.clone()
-                .as_list()
-                .ok_or(interpreter_err!(
-                    CannotConvert,
-                    "Not a list",
-                    expr.clone()
-                ))?
-                .iter()
-                .map(|ls| {
-                    let pair = ls.clone().as_list().ok_or(interpreter_err!(
+        let result: Result<Bindings, InterpreterError> = try {
+            Bindings::of_contents(
+                expr.clone()
+                    .as_list()
+                    .ok_or(interpreter_err!(
                         CannotConvert,
-                        "Not a pair",
-                        ls.clone()
-                    ))?;
-                    if pair.len() != 2 {
-                        throw_interpreter_err!(
-                            CannotConvert,
-                            "Not a pair",
-                            ls.clone()
-                        )
-                    }
-                    Ok((
-                        pair[0].clone().as_ident().ok_or(interpreter_err!(
-                            CannotConvert,
-                            "Not an Ident",
-                            pair[0].clone()
-                        ))?,
-                        pair[1].clone(),
-                    ))
-                })
-                .collect::<Result<_, _>>()?,
-        ))
+                        "Not a list",
+                        expr.clone()
+                    ))?
+                    .iter()
+                    .map(|ls| {
+                        let pair =
+                            ls.clone().as_list().ok_or(interpreter_err!(
+                                CannotConvert,
+                                "Not a pair",
+                                ls.clone()
+                            ))?;
+                        if pair.len() != 2 {
+                            throw_interpreter_err!(
+                                CannotConvert,
+                                "Not a pair",
+                                ls.clone()
+                            )
+                        }
+                        Ok((
+                            pair[0]
+                                .clone()
+                                .as_solidified()
+                                .and_then(|e| e.as_ident())
+                                .ok_or(interpreter_err!(
+                                    CannotConvert,
+                                    "Not a solidifed ident",
+                                    pair[0].clone()
+                                ))?,
+                            pair[1].clone(),
+                        ))
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+        };
+        result.map_err(|mut e| {
+            e.callstack
+                .push(format!("While converting into a bindings: {:#?}", expr));
+            e
+        })
     }
 }
 
@@ -618,11 +728,11 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
     fn into_sexpr(self) -> SExpr {
         match self {
             Some(it) => SExpr::List(vec![
-                lispap!(":some").eval(&mut Context::std()).unwrap(),
+                lispap_std!(":some").unwrap(),
                 it.into_sexpr(),
             ]),
             None => SExpr::List(vec![
-                lispap!(":none").eval(&mut Context::std()).unwrap(),
+                lispap_std!(":none").unwrap()
             ]),
         }
     }
@@ -630,25 +740,36 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
 
 impl<T: FromSExpr> FromSExpr for Option<T> {
     fn from_sexpr(expr: SExpr) -> Result<Option<T>, InterpreterError> {
-        let ls = expr.clone().as_list().ok_or(interpreter_err!(
-            NotA,
-            SExprKind::List,
-            expr.clone()
-        ))?;
-        if ls.len() == 0 || ls.len() > 2 {
-            throw_interpreter_err!(
-                CannotConvert,
-                "Options must be of len 1 or 2",
-                expr
-            )
-        }
-        let discr = ls[0].clone();
-        Ok(if discr == lispap!(":some").eval(&mut Context::std())? {
-            Some(T::from_sexpr(ls[1].clone())?)
-        } else if discr == lispap_std!(":none")? {
-            None
-        } else {
-            throw_interpreter_err!(CannotConvert, "Unknonw discriminant", discr)
+        let result: Result<Option<T>, InterpreterError> = try {
+            let ls = expr.clone().as_list().ok_or(interpreter_err!(
+                NotA,
+                SExprKind::List,
+                expr.clone()
+            ))?;
+            if ls.len() == 0 || ls.len() > 2 {
+                throw_interpreter_err!(
+                    CannotConvert,
+                    "Options must be of len 1 or 2",
+                    expr.clone()
+                )
+            }
+            let discr = ls[0].clone();
+            if discr == lispap_std!(":some")? {
+                Some(T::from_sexpr(ls[1].clone())?)
+            } else if discr == lispap_std!(":none")? {
+                None
+            } else {
+                throw_interpreter_err!(
+                    CannotConvert,
+                    "Unknonw discriminant",
+                    discr
+                )
+            }
+        };
+        result.map_err(|mut e| {
+            e.callstack
+                .push(format!("While converting into an Option: {:#?}", expr.clone()));
+            e
         })
     }
 }
@@ -656,33 +777,36 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
 fn main() -> Result<(), InterpreterError> {
     #[allow(unused_imports)]
     use SExpr::*;
-    let ptn = {
-        let test_code = "(^ 4 ,foo)";
-        let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, test_code));
-        let result = code
-            .eval(&mut Context::new())?
-            .as_list()
-            .unwrap()
-            .last()
-            .unwrap()
-            .clone();
-        //        println!("Result: {:#?}", result);
-        result
-    };
-    let value = {
-        let test_code = "[[:some []] [:some []]]";
-        let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, test_code));
-        let result = code
-            .eval(&mut Context::new())?
-            .as_list()
-            .unwrap()
-            .last()
-            .unwrap()
-            .clone();
-        //        println!("Result: {:#?}", result);
-        result
-    };
-    dbg!(ptn.match_ptn(&value).unwrap());
+    dbg!(Some(Bindings::empty()).into_sexpr());
+    /*
+        let ptn = {
+            let test_code = "(^ 4 ,foo)";
+            let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, test_code));
+            let result = code
+                .eval(&mut Context::new())?
+                .as_list()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            println!("Result: {:#?}", result);
+            result
+        };
+        let value = {
+            let test_code = "[[:some []] [:some []]]";
+            let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, test_code));
+            let result = code
+                .eval(&mut Context::new())?
+                .as_list()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            //        println!("Result: {:#?}", result);
+            result
+        };
+        dbg!(ptn.match_ptn(&value).unwrap());
+    */
     Ok(())
 }
 
@@ -732,10 +856,15 @@ mod tests {
     eval_test! {neg_number, "-5", Int(-5)}
     eval_test! {one_plus_one, "(#/add 1 1)", Int(2)}
     eval_test! {one_plue_one_plus_one, "(#/add 1 (#/add 1 1))", Int(3)}
-    eval_test! {multiple_levels_ident, "`foo/bar/baz", Ident(IDENTS.intern(crate::Ident{
-        names: vec!["foo".to_string(), "bar".to_string(), "baz".to_string()],
-        tl_ns: false
-    }))}
+    eval_test! {
+        multiple_levels_ident,
+        "`foo/bar/baz",
+        Ident(IDENTS.intern(crate::Ident{
+            names: vec!["foo".to_string(), "bar".to_string(), "baz".to_string()],
+            tl_ns: false
+        }))
+    }
+
     eval_test! {quote, "`(1 (#/add 2 3))", List(vec![
         Int(1),
         List(vec![
@@ -744,7 +873,13 @@ mod tests {
             Int(3),
         ]),
     ])}
-    eval_test! {simple_do, "[(#/add 1 2)]", List(vec![Int(3)])}
+
+    eval_test! {
+        simple_do,
+        "[(#/add 1 2)]",
+        List(vec![Int(3)])
+    }
+
     eval_test_std! {uses_std, "std-is-here", Int(42)}
     eval_test_std! {fib_in_std, "(fib 4)", Int(3)}
     eval_test! {list_item_after_sublist, "(#/add (#/add 1 2) 3)", Int(6)}
@@ -761,7 +896,12 @@ mod tests {
     eval_test_std! {
         ptn_intersect_not_matching,
         "(with? (^ 4 ,foo) 5 never unit)",
-        lispap_std!(":()").unwrap()
+        lispap_std!("unit").unwrap()
+    }
+    eval_test_std! {
+        ptn_union,
+        "(with? (~ 3 4) 3 unit never)",
+        lispap_std!("unit").unwrap()
     }
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
@@ -785,13 +925,16 @@ mod tests {
         lispap_std!(":foo").unwrap()
     }
     eval_test_std! {melt, "(melt :foo)", Ident(ident!("foo"))}
-/*    eval_test_std! {default_args,
-                    "(with? default-args [3 5] `(#/add '0 '1) never)",
-                    Int(8)
-    }*/
+    eval_test_std! {
+        default_args,
+        "(with? default-args [3 5] `(#/add '0 '1) never)",
+        Int(8)
+    }
     eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", lispap!("(1 2 3 4 6 7)")}
-    eval_test_std! {dedup_bindings, "(list/dedup [[`a 1] [`b 2] [`c 3] [`d 4]])",
-                    lispap!("((a 1) (b 2) (c 3) (d 4))")
+    eval_test_std! {
+        dedup_bindings,
+        "(list/dedup [[`a 1] [`b 2] [`c 3] [`d 4]])",
+        lispap!("((a 1) (b 2) (c 3) (d 4))")
     }
     eval_test_std! {
         contains,
@@ -807,6 +950,36 @@ mod tests {
         lispap_std!(":false").unwrap()
     }
     eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 never)", Int(1)}
+    eval_test_std! {
+        kleene,
+        "(with? [(many any)] [1 2 [] 5 10 :foo] `unit `never)",
+        lispap_std!("unit").unwrap()
+    }
+    eval_test_std! {
+        kleene_with_end,
+        "(with? [(many any) :foo] [1 2 [] :foo [] [:foo] 3 4 :foo] `unit `never)",
+        lispap_std!("unit").unwrap()
+    }
+    eval_test_std! {
+        kleene_with_end_place,
+        "(with? [(many any) ,foo] [1 2 3 4] `foo `never)",
+        Int(4)
+    }
+    eval_test_std! {
+        kleene_split,
+        "(with? [(many any) :foo (many any)] [1 2 :foo 3 4] `unit `never)",
+        lispap_std!("unit").unwrap()
+    }
+    eval_test_std! {
+        kleene_with_pat,
+        "(with? [(many (~ :foo :bar))] [:foo :bar :foo :foo :bar :bar :foo] `unit `never)",
+        lispap_std!("unit").unwrap()
+    }
+    eval_test_std! {
+        consec,
+        "(with? [(consec :foo :bar)] [:foo :bar] `unit `never)",
+        lispap_std!("unit").unwrap()
+    }
 
     #[test]
     fn match_ptn_bindings() {
@@ -819,7 +992,7 @@ mod tests {
     #[test]
     fn convert_bindings() {
         assert_eq!(
-            Bindings::from_sexpr(lispap!("((foo 4))")).unwrap(),
+            Bindings::from_sexpr(lispap!("((:foo 4))")).unwrap(),
             Bindings::of(ident!("foo"), &SExpr::Int(4)),
         )
     }

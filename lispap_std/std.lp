@@ -1,7 +1,8 @@
 (#/with?
     ,#/sigil/colon
     (#/fun/make
-        `[`: (#/unary-sigil-app/make `` it)]
+;         `[`: (#/unary-sigil-app/make `` it)]
+        `(#/unary-sigil-app/make `: it)
         [,it]
     )
     [`: (#/unary-sigil-app/make `` `())]
@@ -30,7 +31,6 @@
 (def ,ident/from-int #/ident/from-int)
 (def ,ident/concat #/ident/concat)
 
-(def ,rest #/ptn/rest/make)
 (def ,at-ptn-time #/ptn/at-ptn-time/make)
 
 (def ,with? (#/fun/make
@@ -43,7 +43,7 @@
     [,ptn ,expr ,conseq]
 ))
 
-; DEPRECATED
+ ; DEPRECATED
 (def ,if (#/fun/make
     `(with? :true cond consec alt)
     [,cond ,consec ,alt]
@@ -85,26 +85,29 @@
     [,a ,b] ; this is used in ^, so we can't constrain these parameters further
 ))
 
-(def ,ptn/union/acc (#/fun/make
-    `(with? [[:some bindings] [:some bindings]] [a b]
-        `(bindings/join (list/tail a) (list/tail b))
-        `(with? [[:some bindings] [:none]] [a b]
-            `a
-            `(with? [[:none] [:some bindings]] [a b]
-                `b
-                `[:none]
+(def ,ptn/union/acc [
+    (#/fun/make
+        `(with? [[:some bindings] [:some bindings]] [a b]
+            `[:some (bindings/join (list/head (list/tail a)) (list/head (list/tail b)))]
+            `(with? [[:some bindings] any] [a b]
+                `[:some (list/head (list/tail a))]
+                `(with? [any [:some bindings]] [a b]
+                     `[:some (list/head (list/tail b))]
+                     `[:none]
+                )
             )
         )
+        [,a ,b]
     )
-    [,a ,b]
-))
+    [:none]
+])
 
 (def ,ptn/union/make (#/fun/make
     `(#/ptn/acc/make ptn/union/acc args)
     ,args
 ))
 
-(def ,#/sigil/tilde ptn/union/make) ; DEPRACATED
+(def ,#/sigil/tilde ptn/union/make)
 (def ,#/sigil/plus ptn/union/make)
 
 (def ,ptn/intersect/acc [
@@ -125,6 +128,33 @@
 
 (def ,#/sigil/carrot ptn/intersect/make)
 
+(def ,many (#/fun/make
+    `(#/kleene/make [] (#/fun/make
+        `pat
+        [any]
+    ))
+    [,pat]
+))
+
+(def ,consec (#/fun/make
+    `(#/ptn/consec/make args)
+    ,args
+))
+
+(def ,succ (#/fun/make
+    `(#/add 1 n)
+    [,n]
+))
+
+
+(def ,list/len (#/fun/make
+    `(with? [] it
+        `0
+        `(succ (list/len (list/tail it)))
+    )
+    [,it]
+))
+
 (def ,list/map (#/fun/make
     `(with? [] map-list
         `[]
@@ -136,15 +166,14 @@
     [,trans ,map-list]
 ))
 
-(def ,default-args' (#/fun/make
-    `(#/fun/make `[
-        (#/sigil/comma (ident/concat `' (ident/from-int n)))
-        (rest (at-ptn-time (default-args' (#/add n 1))))
-    ] [])
-    [,n]
-))
 
-(def ,default-args [(rest (at-ptn-time (default-args' 0)))])
+(def ,default-args [(#/kleene/make
+    []
+    (#/fun/make
+        `(, (#/ident/concat `' (#/ident/from-int (list/len prev))))
+        [,prev]
+    )
+)])
 
 
 (def ,melt (#/fun/make

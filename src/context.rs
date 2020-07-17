@@ -7,10 +7,9 @@ use std::iter::Extend;
 use crate::intern::Interned;
 use crate::parse;
 use crate::Ident;
-use crate::{IntoSExpr, FromSExpr};
 use crate::SExpr;
 use crate::IDENTS;
-use crate::LISPAP_STD_STR;
+use crate::{FromSExpr, IntoSExpr};
 
 #[derive(Clone, Debug)]
 pub struct Context {
@@ -285,14 +284,6 @@ impl Bindings {
                 cxt
             ))
             .join(primitive!(
-                "#/ptn/rest/make",
-                "[,pat]",
-                Rest(Box::new(get!("pat", cxt))),
-                //TODO
-                Place(ident!("#/noread")),
-                cxt
-            ))
-            .join(primitive!(
                 "#/ptn/at-ptn-time/make",
                 "[,fun]",
                 AtPtnTime(Box::new(get!("fun", cxt))),
@@ -341,6 +332,25 @@ impl Bindings {
                 UnarySigilApp('`',Box::new(cxt(ident!("it")).unwrap())),
                 cxt
             ))
+            .join(primitive!(
+                "#/kleene/make",
+                "[,start ,next]",
+                Kleene{
+                    start: Box::new(get!("start", cxt)),
+                    next: get!("next", cxt).as_fun().unwrap()
+                },
+                lispap_std!("any").unwrap(), // Is there a correct way to write this?
+                cxt
+            ))
+            .join(primitive!(
+                "#/ptn/consec/make",
+                "[,pats]",
+                Consecutive(get!("pats", cxt).as_list().unwrap()),
+                LitMatch(Box::new(Consecutive(
+                    cxt(ident!("pats")).unwrap().as_list().unwrap()
+                ))),
+                cxt
+            ))
     }
 
     pub fn of(ident: Interned<'static, Ident>, value: &SExpr) -> Bindings {
@@ -359,14 +369,13 @@ impl Bindings {
 
     pub fn referenced_idents_sorted(&self) -> Vec<Interned<'static, Ident>> {
         let mut idents = Vec::new();
-        for (ident, expr) in &self.0{
+        for (ident, expr) in &self.0 {
             idents.push(*ident);
             idents.extend(expr.referenced_idents());
         }
         idents.sort();
         idents
     }
-        
 }
 
 impl Context {
@@ -401,14 +410,6 @@ impl Context {
                 bindings: Bindings::new(),
             }],
         }
-    }
-
-    pub fn std() -> Context {
-        let mut cxt = Context::new();
-        lispap!(&format!("[{}]", *LISPAP_STD_STR))
-            .eval(&mut cxt)
-            .unwrap();
-        cxt
     }
 
     pub fn add_bindings(&mut self, bindings: &Bindings) {
@@ -477,7 +478,12 @@ impl IntoSExpr for Bindings {
         SExpr::List(
             self.0
                 .iter()
-                .map(|(i, b)| SExpr::List(vec![SExpr::Ident(*i), b.clone()]))
+                .map(|(i, b)| {
+                    SExpr::List(vec![
+                        SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(*i))),
+                        b.clone(),
+                    ])
+                })
                 .collect(),
         )
     }
