@@ -1,13 +1,13 @@
-macro_rules! lispap {
+macro_rules! patter {
     ($code:expr) => {{
         let tokens = parse::lex($code);
         parse::parse(&tokens)
     }};
 }
 
-macro_rules! lispap_std {
+macro_rules! patter_std {
     ($code:expr) => {
-        lispap!($code).eval(&mut crate::STD_CXT.clone())
+        patter!($code).eval(&mut crate::STD_CXT.clone())
     };
 }
 
@@ -50,7 +50,7 @@ macro_rules! primitive {
                         },
                 }),
                 args_ptn: Box::new(
-                    lispap!($ptn).eval(&mut Context::basic()).unwrap(),
+                    patter!($ptn).eval(&mut Context::basic()).unwrap(),
                 ),
                 closure: Box::new(Context::basic().collapse()),
             }),
@@ -91,11 +91,11 @@ macro_rules! throw_interpreter_err {
     };
 }
 
-macro_rules! lispap_sr {
+macro_rules! patter_sr {
     ($fun:expr, $args:expr, $cxt:expr) => {{
         $fun.call($args.as_list().unwrap(), $cxt)
     }};
     ($fun:expr, $args:expr) => {
-        lispap_sr!($fun, $args, &mut Context::empty())
+        patter_sr!($fun, $args, &mut Context::empty())
     };
 }

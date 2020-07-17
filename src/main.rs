@@ -1,4 +1,4 @@
-//! A simple unoptimized interpreter for lispap (LISt and PAttern Programming)
+//! A simple unoptimized interpreter for Patter
 //! the goal is the simplest possible implementation, for bootstrapping
 
 #![cfg_attr(not(test), allow(dead_code))]
@@ -30,7 +30,7 @@ lazy_static! {
 lazy_static! {
     static ref STD_CXT: Context = {
         let mut cxt = Context::new();
-        lispap!(&format!("[{}]", *LISPAP_STD_STR))
+        patter!(&format!("[{}]", *PATTER_STD_STR))
             .eval(&mut cxt)
             .unwrap();
         cxt
@@ -258,7 +258,7 @@ impl SExpr {
                 (PtnAcc { acc, init, pats }, expr) => {
                     let mut bindings = init.clone();
                     for pat in pats {
-                        bindings = Option::<Bindings>::from_sexpr(lispap_sr!(
+                        bindings = Option::<Bindings>::from_sexpr(patter_sr!(
                             acc,
                             SExpr::List(vec![
                                 bindings.into_sexpr(),
@@ -728,11 +728,11 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
     fn into_sexpr(self) -> SExpr {
         match self {
             Some(it) => SExpr::List(vec![
-                lispap_std!(":some").unwrap(),
+                patter_std!(":some").unwrap(),
                 it.into_sexpr(),
             ]),
             None => SExpr::List(vec![
-                lispap_std!(":none").unwrap()
+                patte_std!(":none").unwrap()
             ]),
         }
     }
@@ -754,9 +754,9 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
                 )
             }
             let discr = ls[0].clone();
-            if discr == lispap_std!(":some")? {
+            if discr == patter_std!(":some")? {
                 Some(T::from_sexpr(ls[1].clone())?)
-            } else if discr == lispap_std!(":none")? {
+            } else if discr == patter_std!(":none")? {
                 None
             } else {
                 throw_interpreter_err!(
@@ -781,7 +781,7 @@ fn main() -> Result<(), InterpreterError> {
     /*
         let ptn = {
             let test_code = "(^ 4 ,foo)";
-            let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, test_code));
+            let code = patter!(&format!("[{} {}]", *PATTER_STD_STR, test_code));
             let result = code
                 .eval(&mut Context::new())?
                 .as_list()
@@ -794,7 +794,7 @@ fn main() -> Result<(), InterpreterError> {
         };
         let value = {
             let test_code = "[[:some []] [:some []]]";
-            let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, test_code));
+            let code = patter!(&format!("[{} {}]", *PATTER_STD_STR, test_code));
             let result = code
                 .eval(&mut Context::new())?
                 .as_list()
@@ -811,8 +811,8 @@ fn main() -> Result<(), InterpreterError> {
 }
 
 lazy_static! {
-    static ref LISPAP_STD_STR: String =
-        std::fs::read_to_string("lispap_std/std.lp").unwrap();
+    static ref PATTER_STD_STR: String =
+        std::fs::read_to_string("patter_std/std.pat").unwrap();
 }
 
 #[cfg(test)]
@@ -823,7 +823,7 @@ mod tests {
             #[test]
             fn $name() {
                 assert_eq!(
-                    lispap!($code).eval(&mut Context::new()).unwrap(),
+                    patter!($code).eval(&mut Context::new()).unwrap(),
                     $expected
                 );
             }
@@ -834,7 +834,7 @@ mod tests {
         ($name:ident, $code:expr, $expected:expr) => {
             #[test]
             fn $name() {
-                let code = lispap!(&format!("[{} {}]", *LISPAP_STD_STR, $code));
+                let code = patter!(&format!("[{} {}]", *PATTER_STD_STR, $code));
                 assert_eq!(
                     *code
                         .eval(&mut Context::new())
@@ -896,19 +896,19 @@ mod tests {
     eval_test_std! {
         ptn_intersect_not_matching,
         "(with? (^ 4 ,foo) 5 never unit)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
     eval_test_std! {
         ptn_union,
         "(with? (~ 3 4) 3 unit never)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
     }
-    eval_test_std! {spread_1, "[1 2 &[3]]", lispap!("(1 2 3)")}
-    eval_test_std! {spread_2_spreads, "[&[1 2] &[1 2]]", lispap!("(1 2 1 2)")}
-    eval_test_std! {spread_nested, "[&[[1 2] [3 4]] [5 6]]", lispap!("((1 2) (3 4) (5 6))")}
+    eval_test_std! {spread_1, "[1 2 &[3]]", patter!("(1 2 3)")}
+    eval_test_std! {spread_2_spreads, "[&[1 2] &[1 2]]", patter!("(1 2 1 2)")}
+    eval_test_std! {spread_nested, "[&[[1 2] [3 4]] [5 6]]", patter!("((1 2) (3 4) (5 6))")}
     eval_test_std! {map_id, "(list/map id [1 2 3 4 5])",
                     List(vec![Int(1), Int(2), Int(3), Int(4), Int(5)])
     }
@@ -922,7 +922,7 @@ mod tests {
     eval_test_std! {
         solidify,
         "(id (id (id (id (id :foo)))))",
-        lispap_std!(":foo").unwrap()
+        patter_std!(":foo").unwrap()
     }
     eval_test_std! {melt, "(melt :foo)", Ident(ident!("foo"))}
     eval_test_std! {
@@ -930,35 +930,35 @@ mod tests {
         "(with? default-args [3 5] `(#/add '0 '1) never)",
         Int(8)
     }
-    eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", lispap!("(1 2 3 4 6 7)")}
+    eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", patter!("(1 2 3 4 6 7)")}
     eval_test_std! {
         dedup_bindings,
         "(list/dedup [[`a 1] [`b 2] [`c 3] [`d 4]])",
-        lispap!("((a 1) (b 2) (c 3) (d 4))")
+        patter!("((a 1) (b 2) (c 3) (d 4))")
     }
     eval_test_std! {
         contains,
         "(list/contains [[`a 1]] [`b 2])",
-        lispap_std!(":false").unwrap()
+        patter_std!(":false").unwrap()
     }
     eval_test_std! {bindings_join, "(bindings/join [[`a 1] [`b 2]] [[`c 3] [`d 4]])",
-                    lispap!("((a 1) (b 2) (c 3) (d 4))")
+                    patter!("((a 1) (b 2) (c 3) (d 4))")
     }
     eval_test_std! {
         match_binding,
         "(with? [`a 1] [`b 2] :true :false)",
-        lispap_std!(":false").unwrap()
+        patter_std!(":false").unwrap()
     }
     eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 never)", Int(1)}
     eval_test_std! {
         kleene,
         "(with? [(many any)] [1 2 [] 5 10 :foo] `unit `never)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
     eval_test_std! {
         kleene_with_end,
         "(with? [(many any) :foo] [1 2 [] :foo [] [:foo] 3 4 :foo] `unit `never)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
     eval_test_std! {
         kleene_with_end_place,
@@ -968,23 +968,23 @@ mod tests {
     eval_test_std! {
         kleene_split,
         "(with? [(many any) :foo (many any)] [1 2 :foo 3 4] `unit `never)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
     eval_test_std! {
         kleene_with_pat,
         "(with? [(many (~ :foo :bar))] [:foo :bar :foo :foo :bar :bar :foo] `unit `never)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
     eval_test_std! {
         consec,
         "(with? [(consec :foo :bar)] [:foo :bar] `unit `never)",
-        lispap_std!("unit").unwrap()
+        patter_std!("unit").unwrap()
     }
 
     #[test]
     fn match_ptn_bindings() {
         assert_eq!(
-            lispap!("(a 1)").match_ptn(&lispap!("(b 2)")).unwrap(),
+            patter!("(a 1)").match_ptn(&patter!("(b 2)")).unwrap(),
             None
         );
     }
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn convert_bindings() {
         assert_eq!(
-            Bindings::from_sexpr(lispap!("((:foo 4))")).unwrap(),
+            Bindings::from_sexpr(patter!("((:foo 4))")).unwrap(),
             Bindings::of(ident!("foo"), &SExpr::Int(4)),
         )
     }

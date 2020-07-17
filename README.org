@@ -1,5 +1,5 @@
-* Lispap
-LISt and PAttern Programming
+* Patter
+A to-be statically compiled lisp dialect making heavy use of pattern matching
 
 See design/notes.org for more info. 
 

@@ -1,5 +1,5 @@
 [package]
-name = "lispap"
+name = "patter"
 version = "0.1.0"
 authors = ["Asa Zeren <asaizeren@gmail.com>"]
 edition = "2018"

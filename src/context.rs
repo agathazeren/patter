@@ -159,7 +159,7 @@ impl Bindings {
                     }
                 },
                 //TODO Make this better
-                lispap_sr!(
+                patter_sr!(
                     cxt(ident!("ptn/union/make")).unwrap().as_fun().unwrap(), List(vec![
                         cxt(ident!("consec")).unwrap().evals_to(),
                         cxt(ident!("alt")).unwrap().evals_to()
@@ -191,7 +191,7 @@ impl Bindings {
                         unreachable!();
                     },
                     evals_to: |cxt: &dyn Fn(Interned<'static, Ident>) -> Option<SExpr>| {
-                        lispap_sr!(
+                        patter_sr!(
                             cxt(ident!("ptn/union/make")).unwrap().as_fun().unwrap(),
                             SExpr::List(Vec::new())
                         ).unwrap()
@@ -339,7 +339,7 @@ impl Bindings {
                     start: Box::new(get!("start", cxt)),
                     next: get!("next", cxt).as_fun().unwrap()
                 },
-                lispap_std!("any").unwrap(), // Is there a correct way to write this?
+                patter_std!("any").unwrap(), // Is there a correct way to write this?
                 cxt
             ))
             .join(primitive!(
