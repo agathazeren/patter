@@ -1,0 +1,14 @@
+* This Document
+This document is where disorganized documentation and writings go. (And since, at the time of writing, that is all the documentation, all the documentation.)
+
+* Plans for the language
+The plan is for this language to be a compiled language, that compiles to native, probably through LLVM. Currently I am writing an interpreter for the language in Rust, in order to be able to use the language, develop the design, and (in the future) bootstrap a compiler written in the language. 
+
+* Key Ideas of the language
+TL;DR: values are patterns. types are values (patterns) only in the eyes of the programmer
+
+  The initial idea behind this language was "What if types were patterns". And then types sortof vanished. More accurately, I realized that the language was (a) curry typed (See [[https://lispcast.com/church-vs-curry-types/]["Church vs Curry Types"]] for a good explanation.) and (b) made no distinction as to where values stopped and (refinement) types started. 
+
+
+
+

@@ -1,0 +1,10 @@
+* Lispap
+LISt and PAttern Programming
+
+See design/notes.org for more info. 
+
+If you have any questions, please either raise an issue on GitHub, or contact me (see my GitHub profile for contact info)
+
+* License
+
+LISPAP is dual-liscenced under the Apace 2.0 and MIT licences. 
