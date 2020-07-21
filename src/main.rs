@@ -64,6 +64,7 @@ pub enum SExpr {
     },
     AtPtnTime(Box<SExpr>),
     LitMatch(Box<SExpr>),
+    Never,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -84,6 +85,7 @@ pub enum SExprKind {
     LitMatch,
     Consecutive,
     Kleene,
+    Never,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -152,10 +154,16 @@ impl SExpr {
                     unreachable!();
                 }
                 s @ Int(_) => s,
+                Never => {
+                    panic!("Somehow reached beyond the unreachable");
+                }
             };
             expr.simplify();
             expr
         };
+        if let Ok(Never) = result {
+            throw_interpreter_err!(ReachedTheUnreachable);
+        }
         result.map_err(|mut e| {
             e.callstack.push(format!("While evaluating {:#?}", self));
             e
@@ -235,15 +243,36 @@ impl SExpr {
                     }
                     (left @ [Consecutive(pats),..], exprs) => {
                         match (
-                            List(pats.to_vec()).match_ptn(&List(exprs[..pats.len()].to_vec()))?,
-                            List(left[1..].to_vec()).match_ptn(&List(exprs[pats.len()..].to_vec()))?,
+                            List(pats.to_vec()).match_ptn(
+                                &List(exprs[..pats.len()].to_vec())
+                            )?,
+                            List(left[1..].to_vec()).match_ptn(
+                                &List(exprs[pats.len()..].to_vec())
+                            )?,
                         ){
                             (Some(left), Some(right)) => Some(left.join(&right)),
                             _ => None
                         }
                     }
+                    (left @ [PtnAcc { acc, init, pats }, ..], exprs) => {
+                        let mut bindings = init.clone();
+                        for pat in pats {
+                            bindings = Option::<Bindings>::from_sexpr(patter_sr!(
+                                acc,
+                                SExpr::List(vec![
+                                    bindings.into_sexpr(),
+                                    {
+                                        let mut ls = left.to_vec();
+                                        ls[0] = pat.clone();
+                                        List(ls)
+                                    }.match_ptn(&List(exprs.to_vec()))?.into_sexpr(),
+                                ])
+                            )?)?;
+                        }
+                        bindings
+                    }
                     (pats, exprs) => panic!(
-                        "Failed to handle pattern match on List{:?} of List{:?}",
+                        "Failed to handle pattern match:\nPattern: List{:#?}\nExpr: List{:#?}",
                         pats, exprs
                     ),
                 },
@@ -259,7 +288,7 @@ impl SExpr {
                     let mut bindings = init.clone();
                     for pat in pats {
                         bindings = Option::<Bindings>::from_sexpr(patter_sr!(
-                            acc,
+                            dbg!(acc),
                             SExpr::List(vec![
                                 bindings.into_sexpr(),
                                 pat.match_ptn(expr)?.into_sexpr(),
@@ -279,13 +308,6 @@ impl SExpr {
                 (a, b) => panic!("Unhandled pattern match: {:?}, {:?}", a, b),
             }
         };
-        /*
-                println!("Matched:");
-                println!("Pattern: {:#?}", self);
-                println!("Value: {:#?}", expr);
-                println!("Result: {:#?}", result);
-                println!("=====");
-        */
         result.map_err(|mut e| {
             e.callstack.push(format!(
                 "While matching {:#?} against {:#?}",
@@ -309,7 +331,7 @@ impl SExpr {
             | Operation { .. } => true,
             PtnAcc { pats, .. } => pats.iter().all(|p| p.matches_singular()),
             Consecutive(_) | Kleene { .. } | AtPtnTime(_) => false,
-            Spread(_) => unreachable!(),
+            Spread(_) | Never => unreachable!(),
         }
     }
 
@@ -326,7 +348,7 @@ impl SExpr {
             | Kleene { .. }
             | AtPtnTime(_)
             | LitMatch(_) => false,
-            Spread(_) => unreachable!(),
+            Spread(_) | Never => unreachable!(),
         }
     }
 
@@ -404,6 +426,7 @@ impl SExpr {
             )
             .collect(),
             Int(_) | Operation { .. } => vec![],
+            Never => unreachable!(),
         }
     }
 
@@ -424,6 +447,7 @@ impl SExpr {
             SExpr::LitMatch(_) => LitMatch,
             SExpr::Consecutive(_) => Consecutive,
             SExpr::Kleene { .. } => Kleene,
+            SExpr::Never => Never,
         }
     }
 
@@ -541,6 +565,12 @@ impl PartialEq for SExpr {
     }
 }
 
+impl PartialEq for Fun {
+    fn eq(&self, _:&Fun) -> bool {
+        false
+    }
+}
+
 impl Debug for SExpr {
     fn fmt(
         &self,
@@ -584,6 +614,7 @@ impl Debug for SExpr {
                 .field("start", start)
                 .field("next", next)
                 .finish(),
+            Never => write!(f, "Never"),
         }
     }
 }
@@ -731,9 +762,7 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
                 patter_std!(":some").unwrap(),
                 it.into_sexpr(),
             ]),
-            None => SExpr::List(vec![
-                patte_std!(":none").unwrap()
-            ]),
+            None => SExpr::List(vec![patter_std!(":none").unwrap()]),
         }
     }
 }
@@ -761,52 +790,36 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
             } else {
                 throw_interpreter_err!(
                     CannotConvert,
-                    "Unknonw discriminant",
+                    "Unknown discriminant",
                     discr
                 )
             }
         };
         result.map_err(|mut e| {
-            e.callstack
-                .push(format!("While converting into an Option: {:#?}", expr.clone()));
+            e.callstack.push(format!(
+                "While converting into an Option: {:#?}",
+                expr.clone()
+            ));
             e
         })
     }
 }
 
 fn main() -> Result<(), InterpreterError> {
-    #[allow(unused_imports)]
-    use SExpr::*;
-    dbg!(Some(Bindings::empty()).into_sexpr());
-    /*
-        let ptn = {
-            let test_code = "(^ 4 ,foo)";
-            let code = patter!(&format!("[{} {}]", *PATTER_STD_STR, test_code));
-            let result = code
-                .eval(&mut Context::new())?
-                .as_list()
-                .unwrap()
-                .last()
-                .unwrap()
-                .clone();
-            println!("Result: {:#?}", result);
-            result
-        };
-        let value = {
-            let test_code = "[[:some []] [:some []]]";
-            let code = patter!(&format!("[{} {}]", *PATTER_STD_STR, test_code));
-            let result = code
-                .eval(&mut Context::new())?
-                .as_list()
-                .unwrap()
-                .last()
-                .unwrap()
-                .clone();
-            //        println!("Result: {:#?}", result);
-            result
-        };
-        dbg!(ptn.match_ptn(&value).unwrap());
-    */
+    if let Ok(SExpr::PtnAcc{acc, init, ..}) = patter_std!("(bind `foo 3)") {
+        dbg!(
+            patter_sr!(
+                acc,
+                SExpr::List(vec![
+                    Some(Bindings::empty()).into_sexpr(),
+                    init.into_sexpr(),
+                ])
+            ).unwrap_or_else(|e| {
+                print!("{}", e);
+                panic!();
+            })
+        );
+    }
     Ok(())
 }
 
@@ -834,15 +847,12 @@ mod tests {
         ($name:ident, $code:expr, $expected:expr) => {
             #[test]
             fn $name() {
-                let code = patter!(&format!("[{} {}]", *PATTER_STD_STR, $code));
                 assert_eq!(
-                    *code
-                        .eval(&mut Context::new())
+                    *patter!(&format!("[{}]", $code))
+                        .eval(&mut STD_CXT.clone())
                         .unwrap_or_else(|e| panic!("Error: {}", e))
-                        .as_list()
-                        .unwrap()
-                        .last()
-                        .unwrap(),
+                        .as_list().unwrap()
+                        .last().unwrap(),
                     $expected
                 );
             }
@@ -888,19 +898,15 @@ mod tests {
     eval_test_std! {def, "(def ,foo 123) foo", Int(123)}
     eval_test_std! {std_works, "3", Int(3)}
     eval_test_std! {sigil_as_value, "(` `foo)", Ident(ident!("foo"))}
-    /*    eval_test_std! {ptn_union_create, "(~ 4 ,foo)",
-                        PtnUnion(Box::new(Int(4)), Box::new(Place(ident!("foo"))))
-        }
-    */
-    eval_test_std! {ptn_intersect, "(with? (^ 4 ,foo) 4 `foo never)", Int(4)}
+    eval_test_std! {ptn_intersect, "(with? (^ 4 ,foo) 4 `foo `never)", Int(4)}
     eval_test_std! {
         ptn_intersect_not_matching,
-        "(with? (^ 4 ,foo) 5 never unit)",
+        "(with? (^ 4 ,foo) 5 `never unit)",
         patter_std!("unit").unwrap()
     }
     eval_test_std! {
         ptn_union,
-        "(with? (~ 3 4) 3 unit never)",
+        "(with? (~ 3 4) 3 unit `never)",
         patter_std!("unit").unwrap()
     }
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
@@ -927,7 +933,7 @@ mod tests {
     eval_test_std! {melt, "(melt :foo)", Ident(ident!("foo"))}
     eval_test_std! {
         default_args,
-        "(with? default-args [3 5] `(#/add '0 '1) never)",
+        "(with? default-args [3 5] `(#/add '0 '1) `never)",
         Int(8)
     }
     eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", patter!("(1 2 3 4 6 7)")}
@@ -949,7 +955,7 @@ mod tests {
         "(with? [`a 1] [`b 2] :true :false)",
         patter_std!(":false").unwrap()
     }
-    eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 never)", Int(1)}
+    eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 `never)", Int(1)}
     eval_test_std! {
         kleene,
         "(with? [(many any)] [1 2 [] 5 10 :foo] `unit `never)",
@@ -980,7 +986,40 @@ mod tests {
         "(with? [(consec :foo :bar)] [:foo :bar] `unit `never)",
         patter_std!("unit").unwrap()
     }
+    eval_test_std! {
+        bind,
+        "(with? [(bind `foo 3)] [] `foo `never)",
+        Int(3)
+    }
+    eval_test_std! {
+        args_opt_passed,
+        "(with? [(arg? `foo 3)] [4] `foo `never)",
+        Int(4)
+    }
+    eval_test_std! {
+        args_opt_not_passed,
+        "(with? [(arg? `foo 3)] [] `foo `never)",
+        Int(3)
+    }
+    eval_test_std! {
+        acc_with_consec,
+        "(with? [(~ (consec any ,foo) (consec ,bar any))] [1 2] `[foo bar] `never)",
+        patter!("(2 1)")
+    }
+    eval_test_std!{
+        union_with_partial_match,
+        "(with? (~ 1 2) 2 `unit `never)",
+        patter_std!("unit").unwrap()
+    }
 
+    #[test]
+    fn never_panics() {
+        assert_eq!(
+            patter_std!("never").err().unwrap().info,
+            crate::error::InterpreterErrorInfo::ReachedTheUnreachable
+        );
+    }
+        
     #[test]
     fn match_ptn_bindings() {
         assert_eq!(

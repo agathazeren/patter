@@ -9,7 +9,7 @@ pub struct InterpreterError {
     pub callstack: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum InterpreterErrorInfo {
     CannotEvaluate(SExpr),
     UnknownName(Interned<'static, Ident>),

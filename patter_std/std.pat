@@ -1,24 +1,30 @@
+(#/defnever `never)
+
 (#/with?
     ,#/sigil/colon
     (#/fun/make
-;         `[`: (#/unary-sigil-app/make `` it)]
         `(#/unary-sigil-app/make `: it)
         [,it]
     )
     [`: (#/unary-sigil-app/make `` `())]
-    #/never
+    `never
     4
 )
 
-(#/with? ,unit :() :() #/never 4)
-(#/with? ,never #/never unit #/never 4)
+(#/with? ,unit :() :() ``never 4)
 
-(#/with? ,def (#/fun/make
-    `[
-        (#/with? name value unit never 8)
-    ]
-    [,name ,value]
-) unit never 2)
+(#/with?
+    ,def
+    (#/fun/make
+        `[
+            (#/with? name value `unit `never 8)
+        ]
+        [,name ,value]
+    )
+    `unit
+    `never
+    4
+)
 
 (def ,#/sigil/amp #/spread/make)
 
@@ -39,11 +45,11 @@
 ))
 
 (def ,with (#/fun/make
-    `(with? ptn expr conseq never)
+    `(with? ptn expr conseq `never)
     [,ptn ,expr ,conseq]
 ))
 
- ; DEPRECATED
+; DEPRECATED
 (def ,if (#/fun/make
     `(with? :true cond consec alt)
     [,cond ,consec ,alt]
@@ -187,6 +193,37 @@
     `it
     [,it]
 ))
+
+(def ,bind (#/fun/make
+    `(#/ptn/acc/make
+        [
+            (#/fun/make
+                `(with? [[:some ,a] [:some ,b]] [a b]
+                    `[:some (bindings/join (bindings/join a b) [[(: name) val]])]
+                    `[:none]
+                )
+                [,a ,b]
+            )
+            [:some []]
+        ]
+        [
+            (consec)
+        ]
+    )
+    [,name ,val]
+))
+
+
+(def ,arg? (#/fun/make
+    `(~ (, name) (bind name val))
+    [,name ,val]
+))
+
+; (def ,#/sigil/backslash (#/fun/make
+;      `(#/fun/make body args-pat)
+;      [(arg? `args-pat default-args) ,body]
+; ))
+
 
 (def ,fib (#/fun/make
     `(with? 0 n

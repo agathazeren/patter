@@ -183,20 +183,21 @@ impl Bindings {
                 Place(ident!("#/noread")),
                 defn_cxt
             ))
-            .join(&Bindings::of(
-                ident!("#/never"),
-                &SExpr::Operation{
-                    eval: |_: &mut Context| {
-                        throw_interpreter_err!(ReachedTheUnreachable);
-                        unreachable!();
-                    },
-                    evals_to: |cxt: &dyn Fn(Interned<'static, Ident>) -> Option<SExpr>| {
-                        patter_sr!(
-                            cxt(ident!("ptn/union/make")).unwrap().as_fun().unwrap(),
-                            SExpr::List(Vec::new())
-                        ).unwrap()
-                    }
+            .join(primitive!(
+                "#/defnever",
+                "[,name]",
+                {
+                    cxt.add_bindings_at_depth(
+                        &Bindings::of(
+                            get!("name", cxt).as_ident().unwrap(),
+                            &Never
+                        ),
+                        4
+                    );
+                    UnarySigilApp(':', Box::new(List(vec![])))
                 },
+                UnarySigilApp(':', Box::new(List(vec![]))),
+                cxt
             ))
             .join(primitive!(
                 "#/spread/make",
@@ -419,7 +420,7 @@ impl Context {
     pub fn add_bindings_at_depth(&mut self, bindings: &Bindings, depth: usize) {
         assert!(
             self.contexts.len() >= 1 + depth,
-            "Tried to add bindings too deep"
+            format!("Tried to add bindings too deep ({})", depth)
         );
         let idx = self.contexts.len() - 1 - depth;
         self.contexts[idx].bindings.insert(bindings.clone());
