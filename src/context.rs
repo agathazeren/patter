@@ -159,12 +159,15 @@ impl Bindings {
                     }
                 },
                 //TODO Make this better
-                patter_sr!(
-                    cxt(ident!("ptn/union/make")).unwrap().as_fun().unwrap(), List(vec![
+                /*patter_sr!(
+                    patter_std!("ptn/union/make").unwrap().as_fun().unwrap(),
+                    List(vec![
                         cxt(ident!("consec")).unwrap().evals_to(),
                         cxt(ident!("alt")).unwrap().evals_to()
-                    ])
-                ).unwrap(),
+                    ]),
+                    &mut Context::empty()
+            ).unwrap(),*/
+                Place(ident!("#/noread")),
                 cxt
             ))
             .join(primitive!(
@@ -340,7 +343,10 @@ impl Bindings {
                     start: Box::new(get!("start", cxt)),
                     next: get!("next", cxt).as_fun().unwrap()
                 },
-                patter_std!("any").unwrap(), // Is there a correct way to write this?
+                {
+                    dbg!();
+                    patter_std!("any").unwrap()
+                },// Is there a correct way to write this?
                 cxt
             ))
             .join(primitive!(
@@ -406,6 +412,7 @@ impl Context {
     }
 
     pub fn new() -> Context {
+        dbg!();
         Context {
             contexts: vec![ContextInner {
                 bindings: Bindings::new(),

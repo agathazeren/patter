@@ -219,11 +219,10 @@
     [,name ,val]
 ))
 
-; (def ,#/sigil/backslash (#/fun/make
-;      `(#/fun/make body args-pat)
-;      [(arg? `args-pat default-args) ,body]
-; ))
-
+(def ,#/sigil/backslash (#/fun/make
+     `(#/fun/make body args-pat)
+     [(arg? `args-pat default-args) ,body]
+))
 
 (def ,fib (#/fun/make
     `(with? 0 n

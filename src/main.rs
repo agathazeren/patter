@@ -224,7 +224,7 @@ impl SExpr {
                         for i in (pats.len())..=exprs.len() {
                             debug_assert!(pats.len() == i);
                             println!("Pats: {:?}", pats);
-                            // this is wrong for kleenes of consecs or kleens
+                            // this is wrong for kleenes of consecs or kleenes
                             if let (Some(left), Some(right)) =  (
                                 List(pats.clone()).match_ptn(
                                     &List(exprs[..i].to_vec())
@@ -239,7 +239,7 @@ impl SExpr {
                                 &mut Context::empty()
                             )?);
                         }
-                        dbg!(out_binds)
+                        out_binds
                     }
                     (left @ [Consecutive(pats),..], exprs) => {
                         match (
@@ -288,7 +288,7 @@ impl SExpr {
                     let mut bindings = init.clone();
                     for pat in pats {
                         bindings = Option::<Bindings>::from_sexpr(patter_sr!(
-                            dbg!(acc),
+                            acc,
                             SExpr::List(vec![
                                 bindings.into_sexpr(),
                                 pat.match_ptn(expr)?.into_sexpr(),
@@ -566,7 +566,7 @@ impl PartialEq for SExpr {
 }
 
 impl PartialEq for Fun {
-    fn eq(&self, _:&Fun) -> bool {
+    fn eq(&self, _: &Fun) -> bool {
         false
     }
 }
@@ -759,10 +759,12 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
     fn into_sexpr(self) -> SExpr {
         match self {
             Some(it) => SExpr::List(vec![
-                patter_std!(":some").unwrap(),
+                {
+                    SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("some"))))
+                },
                 it.into_sexpr(),
             ]),
-            None => SExpr::List(vec![patter_std!(":none").unwrap()]),
+            None => SExpr::List(vec![SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("some"))))]),
         }
     }
 }
@@ -783,9 +785,9 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
                 )
             }
             let discr = ls[0].clone();
-            if discr == patter_std!(":some")? {
+            if discr == SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("some")))) {
                 Some(T::from_sexpr(ls[1].clone())?)
-            } else if discr == patter_std!(":none")? {
+            } else if discr == SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("none")))) {
                 None
             } else {
                 throw_interpreter_err!(
@@ -806,20 +808,7 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
 }
 
 fn main() -> Result<(), InterpreterError> {
-    if let Ok(SExpr::PtnAcc{acc, init, ..}) = patter_std!("(bind `foo 3)") {
-        dbg!(
-            patter_sr!(
-                acc,
-                SExpr::List(vec![
-                    Some(Bindings::empty()).into_sexpr(),
-                    init.into_sexpr(),
-                ])
-            ).unwrap_or_else(|e| {
-                print!("{}", e);
-                panic!();
-            })
-        );
-    }
+    dbg!(&*STD_CXT);
     Ok(())
 }
 
@@ -851,8 +840,10 @@ mod tests {
                     *patter!(&format!("[{}]", $code))
                         .eval(&mut STD_CXT.clone())
                         .unwrap_or_else(|e| panic!("Error: {}", e))
-                        .as_list().unwrap()
-                        .last().unwrap(),
+                        .as_list()
+                        .unwrap()
+                        .last()
+                        .unwrap(),
                     $expected
                 );
             }
@@ -1006,10 +997,15 @@ mod tests {
         "(with? [(~ (consec any ,foo) (consec ,bar any))] [1 2] `[foo bar] `never)",
         patter!("(2 1)")
     }
-    eval_test_std!{
+    eval_test_std! {
         union_with_partial_match,
         "(with? (~ 1 2) 2 `unit `never)",
         patter_std!("unit").unwrap()
+    }
+    eval_test_std!{
+        lambda,
+        "((\\ [,a] `(#/add a 1)) 1)",
+        Int(2)
     }
 
     #[test]
@@ -1019,7 +1015,7 @@ mod tests {
             crate::error::InterpreterErrorInfo::ReachedTheUnreachable
         );
     }
-        
+
     #[test]
     fn match_ptn_bindings() {
         assert_eq!(
