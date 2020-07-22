@@ -31,6 +31,14 @@ impl Bindings {
         self
     }
 
+    pub fn intersect(left: Option<Bindings>, right: Option<Bindings>) -> Option<Bindings>{
+        if let (Some(l_binds), Some(r_binds)) = (left, right) {
+            Some(l_binds.join(&r_binds))
+        } else {
+            None
+        }
+    }
+
     pub fn insert(&mut self, other: Bindings) {
         self.0.extend(other.0.into_iter());
     }
@@ -358,6 +366,14 @@ impl Bindings {
                 ))),
                 cxt
             ))
+            .join(primitive!(
+                "#/zero-width",
+                "[,inner]",
+                ZeroWidth(Box::new(get!("inner", cxt))),
+                LitMatch(Box::new(ZeroWidth(Box::new(cxt(ident!("inner")).unwrap())))),
+                cxt
+            ))
+                    
     }
 
     pub fn of(ident: Interned<'static, Ident>, value: &SExpr) -> Bindings {

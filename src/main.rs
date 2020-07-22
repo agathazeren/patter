@@ -64,6 +64,7 @@ pub enum SExpr {
     },
     AtPtnTime(Box<SExpr>),
     LitMatch(Box<SExpr>),
+    ZeroWidth(Box<SExpr>),
     Never,
 }
 
@@ -85,6 +86,7 @@ pub enum SExprKind {
     LitMatch,
     Consecutive,
     Kleene,
+    ZeroWidth,
     Never,
 }
 
@@ -149,6 +151,7 @@ impl SExpr {
                 | e @ Place(_)
                 | e @ PtnAcc { .. }
                 | e @ Fun(_)
+                | e @ ZeroWidth(_)
                 | e @ AtPtnTime(_) => {
                     throw_interpreter_err!(CannotEvaluate, e);
                     unreachable!();
@@ -217,6 +220,15 @@ impl SExpr {
                             _ => None,
                         }
                     }
+                    ([ZeroWidth(left), l_rest @ ..], [ZeroWidth(right), r_rest @ ..]) => {
+                        Bindings::intersect(
+                            left.match_ptn(right)?,
+                            List(l_rest.to_vec()).match_ptn(&List(r_rest.to_vec()))?
+                        )
+                    }
+                    ([ZeroWidth(_), l_rest @ ..], r_rest) => {
+                        List(l_rest.to_vec()).match_ptn(&List(r_rest.to_vec()))?
+                    }
                     (left @ [Kleene{ start, next }, ..], exprs) => {
                         println!("Matching against a kleene: {:?}", exprs);
                         let mut out_binds = Some(Bindings::basic()); //dbg
@@ -272,7 +284,7 @@ impl SExpr {
                         bindings
                     }
                     (pats, exprs) => panic!(
-                        "Failed to handle pattern match:\nPattern: List{:#?}\nExpr: List{:#?}",
+                        "Failed to handle list pattern match:\nPattern: List{:#?}\nExpr: List{:#?}",
                         pats, exprs
                     ),
                 },
@@ -330,7 +342,7 @@ impl SExpr {
             | Int(_)
             | Operation { .. } => true,
             PtnAcc { pats, .. } => pats.iter().all(|p| p.matches_singular()),
-            Consecutive(_) | Kleene { .. } | AtPtnTime(_) => false,
+            Consecutive(_) | Kleene { .. } | AtPtnTime(_) | ZeroWidth(_) => false,
             Spread(_) | Never => unreachable!(),
         }
     }
@@ -347,6 +359,7 @@ impl SExpr {
             | Consecutive(_)
             | Kleene { .. }
             | AtPtnTime(_)
+                | ZeroWidth(_) //sortof
             | LitMatch(_) => false,
             Spread(_) | Never => unreachable!(),
         }
@@ -396,7 +409,7 @@ impl SExpr {
                 merge(a.referenced_idents_inner(), b.referenced_idents_inner())
                     .collect::<Vec<_>>()
             }
-            LitMatch(expr) | AtPtnTime(expr) => expr.referenced_idents_inner(),
+            LitMatch(expr) | AtPtnTime(expr) | ZeroWidth(expr) => expr.referenced_idents_inner(),
             UnarySigilApp(sig, arg) => merge(
                 iter::once(make_sigil_ident(*sig)),
                 arg.referenced_idents_inner(),
@@ -447,6 +460,7 @@ impl SExpr {
             SExpr::LitMatch(_) => LitMatch,
             SExpr::Consecutive(_) => Consecutive,
             SExpr::Kleene { .. } => Kleene,
+            SExpr::ZeroWidth(_) => ZeroWidth,
             SExpr::Never => Never,
         }
     }
@@ -614,6 +628,10 @@ impl Debug for SExpr {
                 .field("start", start)
                 .field("next", next)
                 .finish(),
+            ZeroWidth(expr) => f
+                .debug_tuple("ZeroWidth")
+                .field(expr)
+                .finish(),
             Never => write!(f, "Never"),
         }
     }
@@ -760,11 +778,17 @@ impl<T: IntoSExpr> IntoSExpr for Option<T> {
         match self {
             Some(it) => SExpr::List(vec![
                 {
-                    SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("some"))))
+                    SExpr::UnarySigilApp(
+                        ':',
+                        Box::new(SExpr::Ident(ident!("some"))),
+                    )
                 },
                 it.into_sexpr(),
             ]),
-            None => SExpr::List(vec![SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("some"))))]),
+            None => SExpr::List(vec![SExpr::UnarySigilApp(
+                ':',
+                Box::new(SExpr::Ident(ident!("some"))),
+            )]),
         }
     }
 }
@@ -785,9 +809,19 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
                 )
             }
             let discr = ls[0].clone();
-            if discr == SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("some")))) {
+            if discr
+                == SExpr::UnarySigilApp(
+                    ':',
+                    Box::new(SExpr::Ident(ident!("some"))),
+                )
+            {
                 Some(T::from_sexpr(ls[1].clone())?)
-            } else if discr == SExpr::UnarySigilApp(':', Box::new(SExpr::Ident(ident!("none")))) {
+            } else if discr
+                == SExpr::UnarySigilApp(
+                    ':',
+                    Box::new(SExpr::Ident(ident!("none"))),
+                )
+            {
                 None
             } else {
                 throw_interpreter_err!(
@@ -1002,10 +1036,20 @@ mod tests {
         "(with? (~ 1 2) 2 `unit `never)",
         patter_std!("unit").unwrap()
     }
-    eval_test_std!{
+    eval_test_std! {
         lambda,
         "((\\ [,a] `(#/add a 1)) 1)",
         Int(2)
+    }
+    eval_test_std! {
+        vows_match,
+        "(with? [(vow :a)] [(vow :a)] `unit `never)",
+        patter_std!("unit").unwrap()
+    }
+    eval_test_std! {
+        vow_zero_width,
+        "(with? [(vow :a)] [] `unit `never)",
+        patter_std!("unit").unwrap()
     }
 
     #[test]

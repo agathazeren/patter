@@ -26,9 +26,9 @@
     4
 )
 
-(def ,#/sigil/amp #/spread/make)
-
 (def ,dbg #/dbg)
+
+(def ,#/sigil/amp #/spread/make)
 
 (def ,list/head #/list/head)
 (def ,list/tail #/list/tail)
@@ -58,8 +58,8 @@
 (def ,any ,#/noread)
 
 (def ,list/contains (#/fun/make
-    `(with? target (dbg (list/head list))
-        `(dbg :true)
+    `(with? target (list/head list)
+        `:true
         `(with? [] (list/tail list)
             :false
             `(list/contains (list/tail list) target)
@@ -224,7 +224,7 @@
      [(arg? `args-pat default-args) ,body]
 ))
 
-(def ,fib (#/fun/make
+(def ,fib (\ [,n]
     `(with? 0 n
         `0
         `(with? 1 n
@@ -235,5 +235,9 @@
             )
         )
     ) 
-    [,n]
+))
+
+
+(def ,vow (\ [,thing]
+    `(#/zero-width thing)
 ))
