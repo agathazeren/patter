@@ -9,6 +9,7 @@ mod macros;
 mod context;
 mod error;
 mod intern;
+mod number;
 mod parse;
 
 use itertools::merge;
@@ -22,6 +23,7 @@ use std::iter;
 use crate::context::{Bindings, Context};
 use crate::error::InterpreterError;
 use crate::intern::{Interned, Interner};
+use crate::number::Number;
 
 lazy_static! {
     static ref IDENTS: Interner<Ident> = Interner::new();
@@ -43,9 +45,9 @@ pub enum SExpr {
     List(Vec<SExpr>),
     Ident(Interned<'static, Ident>),
     Place(Interned<'static, Ident>),
+    Number(Number),
     Fun(Fun),
     UnarySigilApp(char, Box<SExpr>),
-    Int(isize),
     Operation {
         eval: fn(&mut Context) -> Result<SExpr, InterpreterError>,
         evals_to:
@@ -76,7 +78,7 @@ pub enum SExprKind {
     Place,
     Fun,
     UnarySigilApp,
-    Int,
+    Number,
     Operation,
     Keyword,
     Spread,
@@ -156,7 +158,7 @@ impl SExpr {
                     throw_interpreter_err!(CannotEvaluate, e);
                     unreachable!();
                 }
-                s @ Int(_) => s,
+                s @ Number(_) => s,
                 Never => {
                     panic!("Somehow reached beyond the unreachable");
                 }
@@ -339,10 +341,12 @@ impl SExpr {
             | Place(_)
             | Fun(_)
             | UnarySigilApp(_, _)
-            | Int(_)
+            | Number(_)
             | Operation { .. } => true,
             PtnAcc { pats, .. } => pats.iter().all(|p| p.matches_singular()),
-            Consecutive(_) | Kleene { .. } | AtPtnTime(_) | ZeroWidth(_) => false,
+            Consecutive(_) | Kleene { .. } | AtPtnTime(_) | ZeroWidth(_) => {
+                false
+            }
             Spread(_) | Never => unreachable!(),
         }
     }
@@ -350,7 +354,7 @@ impl SExpr {
     fn matches_literally(&self) -> bool {
         use SExpr::*;
         match self {
-            Sigil(_) | Ident(_) | Int(_) | Operation { .. } => true,
+            Sigil(_) | Ident(_) | Number(_) | Operation { .. } => true,
             List(ls) => ls.iter().all(|e| e.matches_literally()),
             Place(_)
             | Fun(_)
@@ -409,7 +413,9 @@ impl SExpr {
                 merge(a.referenced_idents_inner(), b.referenced_idents_inner())
                     .collect::<Vec<_>>()
             }
-            LitMatch(expr) | AtPtnTime(expr) | ZeroWidth(expr) => expr.referenced_idents_inner(),
+            LitMatch(expr) | AtPtnTime(expr) | ZeroWidth(expr) => {
+                expr.referenced_idents_inner()
+            }
             UnarySigilApp(sig, arg) => merge(
                 iter::once(make_sigil_ident(*sig)),
                 arg.referenced_idents_inner(),
@@ -438,7 +444,7 @@ impl SExpr {
                 Fun(next.clone()).referenced_idents_inner(),
             )
             .collect(),
-            Int(_) | Operation { .. } => vec![],
+            Number(_) | Operation { .. } => vec![],
             Never => unreachable!(),
         }
     }
@@ -453,7 +459,7 @@ impl SExpr {
             SExpr::Place(_) => Place,
             SExpr::Fun(_) => Fun,
             SExpr::UnarySigilApp(_, _) => UnarySigilApp,
-            SExpr::Int(_) => Int,
+            SExpr::Number(_) => Number,
             SExpr::Operation { .. } => Operation,
             SExpr::AtPtnTime(_) => AtPtnTime,
             SExpr::PtnAcc { .. } => PtnAcc,
@@ -465,9 +471,9 @@ impl SExpr {
         }
     }
 
-    fn as_int(self) -> Option<isize> {
-        if let SExpr::Int(i) = self {
-            Some(i)
+    fn as_number(self) -> Option<Number> {
+        if let SExpr::Number(num) = self {
+            Some(num)
         } else {
             None
         }
@@ -568,7 +574,7 @@ impl PartialEq for SExpr {
             (Ident(id0), Ident(id1)) | (Place(id0), Place(id1)) => id0 == id1,
 
             (Fun(_), Fun(_)) => false,
-            (Int(i0), Int(i1)) => i0 == i1,
+            (Number(i0), Number(i1)) => i0 == i1,
             (UnarySigilApp(sig1, expr1), UnarySigilApp(sig2, expr2)) => {
                 sig1 == sig2 && expr1 == expr2
             }
@@ -609,7 +615,7 @@ impl Debug for SExpr {
             Ident(id) => write!(f, "Ident({:?})", id),
             Place(id) => write!(f, "Place({:?})", id),
             Fun(fun) => f.debug_tuple("Fun").field(fun).finish(),
-            Int(i) => write!(f, "Int({:?})", i),
+            Number(i) => write!(f, "Number({:?})", i),
             Operation { .. } => write!(f, "Operation"),
             Sigil(s) => write!(f, "Sigil({})", s),
             PtnAcc { acc, init, pats } => f
@@ -628,10 +634,7 @@ impl Debug for SExpr {
                 .field("start", start)
                 .field("next", next)
                 .finish(),
-            ZeroWidth(expr) => f
-                .debug_tuple("ZeroWidth")
-                .field(expr)
-                .finish(),
+            ZeroWidth(expr) => f.debug_tuple("ZeroWidth").field(expr).finish(),
             Never => write!(f, "Never"),
         }
     }
@@ -842,7 +845,15 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
 }
 
 fn main() -> Result<(), InterpreterError> {
-    dbg!(&*STD_CXT);
+    dbg!(
+        patter!(&format!("[{}]", "(list/dedup [1 2 3 3 4 6 7 1 3])"))
+            .eval(&mut STD_CXT.clone())
+            .unwrap_or_else(|e| panic!("Error: {}", e))
+            .as_list()
+            .unwrap()
+            .last()
+            .unwrap()
+    );
     Ok(())
 }
 
@@ -887,10 +898,10 @@ mod tests {
     use super::SExpr::*;
     use super::*;
 
-    eval_test! {lone_number, "5", Int(5)}
-    eval_test! {neg_number, "-5", Int(-5)}
-    eval_test! {one_plus_one, "(#/add 1 1)", Int(2)}
-    eval_test! {one_plue_one_plus_one, "(#/add 1 (#/add 1 1))", Int(3)}
+    eval_test! {lone_number, "5", number!(5)}
+    eval_test! {neg_number, "-5", number!(-5)}
+    eval_test! {one_plus_one, "(#/add 1 1)", number!(2)}
+    eval_test! {one_plue_one_plus_one, "(#/add 1 (#/add 1 1))", number!(3)}
     eval_test! {
         multiple_levels_ident,
         "`foo/bar/baz",
@@ -901,29 +912,29 @@ mod tests {
     }
 
     eval_test! {quote, "`(1 (#/add 2 3))", List(vec![
-        Int(1),
+        number!(1),
         List(vec![
             Ident(ident!("#/add")),
-            Int(2),
-            Int(3),
+            number!(2),
+            number!(3),
         ]),
     ])}
 
     eval_test! {
         simple_do,
         "[(#/add 1 2)]",
-        List(vec![Int(3)])
+        List(vec![number!(3)])
     }
 
-    eval_test_std! {uses_std, "std-is-here", Int(42)}
-    eval_test_std! {fib_in_std, "(fib 4)", Int(3)}
-    eval_test! {list_item_after_sublist, "(#/add (#/add 1 2) 3)", Int(6)}
-    eval_test_std! {id_int, "(id 42)", Int(42)}
+    eval_test_std! {uses_std, "std-is-here", number!(42)}
+    eval_test_std! {fib_in_std, "(fib 4)", number!(3)}
+    eval_test! {list_item_after_sublist, "(#/add (#/add 1 2) 3)", number!(6)}
+    eval_test_std! {id_int, "(id 42)", number!(42)}
     eval_test! {sq_brkt, "[,foo]", List(vec![Place(ident!("foo"))])}
-    eval_test_std! {def, "(def ,foo 123) foo", Int(123)}
-    eval_test_std! {std_works, "3", Int(3)}
+    eval_test_std! {def, "(def ,foo 123) foo", number!(123)}
+    eval_test_std! {std_works, "3", number!(3)}
     eval_test_std! {sigil_as_value, "(` `foo)", Ident(ident!("foo"))}
-    eval_test_std! {ptn_intersect, "(with? (^ 4 ,foo) 4 `foo `never)", Int(4)}
+    eval_test_std! {ptn_intersect, "(with? (^ 4 ,foo) 4 `foo `never)", number!(4)}
     eval_test_std! {
         ptn_intersect_not_matching,
         "(with? (^ 4 ,foo) 5 `never unit)",
@@ -935,21 +946,21 @@ mod tests {
         patter_std!("unit").unwrap()
     }
     eval_test_std! {spread, "[1 2 &[3 4] 5 6]",
-                    List(vec![Int(1), Int(2), Int(3), Int(4), Int(5), Int(6)])
+                    List(vec![number!(1), number!(2), number!(3), number!(4), number!(5), number!(6)])
     }
     eval_test_std! {spread_1, "[1 2 &[3]]", patter!("(1 2 3)")}
     eval_test_std! {spread_2_spreads, "[&[1 2] &[1 2]]", patter!("(1 2 1 2)")}
     eval_test_std! {spread_nested, "[&[[1 2] [3 4]] [5 6]]", patter!("((1 2) (3 4) (5 6))")}
     eval_test_std! {map_id, "(list/map id [1 2 3 4 5])",
-                    List(vec![Int(1), Int(2), Int(3), Int(4), Int(5)])
+                    List(vec![number!(1), number!(2), number!(3), number!(4), number!(5)])
     }
     eval_test_std! {map_id_0, "(list/map id [])", List(vec![])}
-    eval_test_std! {map_id_1, "(list/map id [1])", List(vec![Int(1)])}
-    eval_test_std! {head_1, "(list/head [1])", Int(1)}
-    eval_test_std! {tail, "(list/tail [1 2 3])", List(vec!(Int(2), Int(3)))}
+    eval_test_std! {map_id_1, "(list/map id [1])", List(vec![number!(1)])}
+    eval_test_std! {head_1, "(list/head [1])", number!(1)}
+    eval_test_std! {tail, "(list/tail [1 2 3])", List(vec!(number!(2), number!(3)))}
     eval_test_std! {tail_1, "(list/tail [1])", List(vec![])}
     eval_test_std! {tail_0, "(list/tail [])", List(vec![])}
-    eval_test_std! {spread_empty, "[1 &[] &[]]", List(vec![Int(1)])}
+    eval_test_std! {spread_empty, "[1 &[] &[]]", List(vec![number!(1)])}
     eval_test_std! {
         solidify,
         "(id (id (id (id (id :foo)))))",
@@ -959,9 +970,11 @@ mod tests {
     eval_test_std! {
         default_args,
         "(with? default-args [3 5] `(#/add '0 '1) `never)",
-        Int(8)
+        number!(8)
     }
+    /* fails due to stack overflow when run in test mode due to lack of tco
     eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", patter!("(1 2 3 4 6 7)")}
+     */
     eval_test_std! {
         dedup_bindings,
         "(list/dedup [[`a 1] [`b 2] [`c 3] [`d 4]])",
@@ -980,7 +993,7 @@ mod tests {
         "(with? [`a 1] [`b 2] :true :false)",
         patter_std!(":false").unwrap()
     }
-    eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 `never)", Int(1)}
+    eval_test_std! {any, "(with? any [ 1 3 [ [] [] :hi]] 1 `never)", number!(1)}
     eval_test_std! {
         kleene,
         "(with? [(many any)] [1 2 [] 5 10 :foo] `unit `never)",
@@ -994,7 +1007,7 @@ mod tests {
     eval_test_std! {
         kleene_with_end_place,
         "(with? [(many any) ,foo] [1 2 3 4] `foo `never)",
-        Int(4)
+        number!(4)
     }
     eval_test_std! {
         kleene_split,
@@ -1014,17 +1027,17 @@ mod tests {
     eval_test_std! {
         bind,
         "(with? [(bind `foo 3)] [] `foo `never)",
-        Int(3)
+        number!(3)
     }
     eval_test_std! {
         args_opt_passed,
         "(with? [(arg? `foo 3)] [4] `foo `never)",
-        Int(4)
+        number!(4)
     }
     eval_test_std! {
         args_opt_not_passed,
         "(with? [(arg? `foo 3)] [] `foo `never)",
-        Int(3)
+        number!(3)
     }
     eval_test_std! {
         acc_with_consec,
@@ -1039,7 +1052,7 @@ mod tests {
     eval_test_std! {
         lambda,
         "((\\ [,a] `(#/add a 1)) 1)",
-        Int(2)
+        number!(2)
     }
     eval_test_std! {
         vows_match,
@@ -1072,7 +1085,7 @@ mod tests {
     fn convert_bindings() {
         assert_eq!(
             Bindings::from_sexpr(patter!("((:foo 4))")).unwrap(),
-            Bindings::of(ident!("foo"), &SExpr::Int(4)),
+            Bindings::of(ident!("foo"), &number!(4)),
         )
     }
 

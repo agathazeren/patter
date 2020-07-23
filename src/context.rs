@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::fmt::Display;
 use std::iter::Extend;
@@ -31,7 +31,10 @@ impl Bindings {
         self
     }
 
-    pub fn intersect(left: Option<Bindings>, right: Option<Bindings>) -> Option<Bindings>{
+    pub fn intersect(
+        left: Option<Bindings>,
+        right: Option<Bindings>,
+    ) -> Option<Bindings> {
         if let (Some(l_binds), Some(r_binds)) = (left, right) {
             Some(l_binds.join(&r_binds))
         } else {
@@ -141,12 +144,12 @@ impl Bindings {
             .join(primitive!(
                 "#/add",
                 "[,lhs ,rhs]",
-                Int(get!("lhs", cxt)
-                    .as_int()
-                    .expect(&format!("Can only add ints, not {:?}", get!("lhs", cxt)))
+                Number(get!("lhs", cxt)
+                    .as_number()
+                    .expect(&format!("Can only add numbers, not {:?}", get!("lhs", cxt)))
                     + get!("rhs", cxt)
-                        .as_int()
-                    .expect(&format!("Can only add ints, not {:?}", get!("rhs", cxt)))),
+                        .as_number()
+                    .expect(&format!("Can only add numbers, not {:?}", get!("rhs", cxt)))),
                 Place(ident!("#/noread")),
                 cxt
             ))
@@ -156,7 +159,7 @@ impl Bindings {
                {
                     if let Some(bindings) = get!("ptn", cxt).match_ptn(&get!("expr", cxt))? {
                         let depth = get!("scope-depth", cxt)
-                            .as_int()
+                            .as_number()
                             .unwrap()
                             .try_into()
                             .unwrap();
@@ -288,7 +291,7 @@ impl Bindings {
                 "#/ident/from-int",
                 "[,n]",
                 Ident(IDENTS.intern(crate::Ident{
-                    names: vec![get!("n", cxt).as_int().unwrap().to_string()],
+                    names: vec![usize::try_from(get!("n", cxt).as_number().unwrap()).unwrap().to_string()],
                     tl_ns: false
                 })),
                 //TODO
@@ -373,7 +376,6 @@ impl Bindings {
                 LitMatch(Box::new(ZeroWidth(Box::new(cxt(ident!("inner")).unwrap())))),
                 cxt
             ))
-                    
     }
 
     pub fn of(ident: Interned<'static, Ident>, value: &SExpr) -> Bindings {

@@ -143,7 +143,7 @@ fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
         }
         Num(i) => {
             *offset += 1;
-            SExpr::Int(*i)
+            number!(*i)
         }
         Word(_) => SExpr::Ident(IDENTS.intern(parse_ident_at(source, offset))),
         t => panic!("Unknown token {:?}", t),

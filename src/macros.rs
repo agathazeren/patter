@@ -99,3 +99,9 @@ macro_rules! patter_sr {
         patter_sr!($fun, $args, &mut Context::empty())
     };
 }
+
+macro_rules! number {
+    ($n:expr) => {
+        crate::SExpr::Number(crate::number::Number::from($n))
+    };
+}
