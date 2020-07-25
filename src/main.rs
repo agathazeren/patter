@@ -14,6 +14,8 @@ mod parse;
 
 use itertools::merge;
 use lazy_static::lazy_static;
+use num::BigInt;
+use unicode_segmentation::UnicodeSegmentation;
 
 use std::fmt;
 use std::fmt::Debug;
@@ -23,7 +25,7 @@ use std::iter;
 use crate::context::{Bindings, Context};
 use crate::error::InterpreterError;
 use crate::intern::{Interned, Interner};
-use crate::number::Number;
+use crate::number::{Number, NumberRep, Precision};
 
 lazy_static! {
     static ref IDENTS: Interner<Ident> = Interner::new();
@@ -108,10 +110,8 @@ pub struct Fun {
 impl SExpr {
     fn eval(&self, mut cxt: &mut Context) -> Result<SExpr, InterpreterError> {
         use SExpr::*;
-        let mut self_simp = self.clone();
-        self_simp.simplify();
         let result: Result<SExpr, InterpreterError> = try {
-            let mut expr = match self_simp {
+            let expr = match self.simplify() {
                 List(ls) => {
                     if ls.is_empty() {
                         throw_interpreter_err!(
@@ -163,8 +163,7 @@ impl SExpr {
                     panic!("Somehow reached beyond the unreachable");
                 }
             };
-            expr.simplify();
-            expr
+            expr.simplify()
         };
         if let Ok(Never) = result {
             throw_interpreter_err!(ReachedTheUnreachable);
@@ -373,25 +372,25 @@ impl SExpr {
         unimplemented!();
     }
 
-    fn simplify(&mut self) {
+    fn simplify(&self) -> SExpr {
         use SExpr::*;
-        *self = match &*self {
+        match self {
             List(ls) => {
                 let mut simp_ls: Vec<SExpr> = Vec::new();
                 for expr in ls {
-                    let mut expr = expr.clone();
-                    expr.simplify();
-                    if let Spread(exprs) = expr {
+                    if let Spread(exprs) = expr.simplify() {
                         simp_ls.extend(exprs.into_iter())
                     } else {
-                        simp_ls.push(expr)
+                        simp_ls.push(expr.clone())
                     }
                 }
                 List(simp_ls)
             }
+            UnarySigilApp(sig, expr) => {
+                UnarySigilApp(*sig, Box::new(expr.simplify()))
+            }
             e => e.clone(),
         }
-        .clone();
     }
 
     fn referenced_idents(&self) -> Vec<Interned<'static, Ident>> {
@@ -579,6 +578,7 @@ impl PartialEq for SExpr {
                 sig1 == sig2 && expr1 == expr2
             }
             (Sigil(s1), Sigil(s2)) => s1 == s2,
+            (ZeroWidth(left), ZeroWidth(right)) => left == right,
             (a, b) if a.kind() != b.kind() => false,
             (a, b) => panic!("Unhandled equality case: ({:?}, {:?})", a, b),
         }
@@ -844,16 +844,66 @@ impl<T: FromSExpr> FromSExpr for Option<T> {
     }
 }
 
+impl IntoSExpr for String {
+    fn into_sexpr(self) -> SExpr {
+        SExpr::UnarySigilApp(
+            '[',
+            Box::new(SExpr::List(
+                self.graphemes(true)
+                    .map(|grapheme| {
+                        SExpr::UnarySigilApp(
+                            '[',
+                            Box::new(SExpr::List(vec![
+                                SExpr::Spread(
+                                    grapheme
+                                        .chars()
+                                        .map(|c| c.into_sexpr())
+                                        .collect(),
+                                ),
+                                SExpr::UnarySigilApp(
+                                    '`',
+                                    Box::new(SExpr::ZeroWidth(Box::new(SExpr::Ident(
+                                        ident!("extended-grapheme-cluster"),
+                                    )))),
+                                ),
+                            ])),
+                        )
+                    })
+                    .map(|e| e.simplify())
+                    .collect(),
+            )),
+        )
+    }
+}
+
+impl IntoSExpr for char {
+    fn into_sexpr(self) -> SExpr {
+        SExpr::Number(Number {
+            rep: NumberRep::ArbitraryInteger(BigInt::from(u32::from(self))),
+            precision: Precision::integer(0.into(), (2_u64.pow(21) - 1).into()),
+        })
+    }
+}
+
 fn main() -> Result<(), InterpreterError> {
-    dbg!(
-        patter!(&format!("[{}]", "(list/dedup [1 2 3 3 4 6 7 1 3])"))
-            .eval(&mut STD_CXT.clone())
-            .unwrap_or_else(|e| panic!("Error: {}", e))
-            .as_list()
-            .unwrap()
-            .last()
-            .unwrap()
-    );
+    dbg!(std::mem::size_of::<parse::Token>());
+
+    let toks = dbg!(parse::lex(r#"(id "a")"#));
+    dbg!(parse::parse(&toks));
+
+    /*
+        dbg!(
+            patter!(r#"(id "a")"#)
+                .eval(&mut STD_CXT.clone())
+                .unwrap_or_else(|e| panic!("Error: {}", e))
+                .as_list()
+                .unwrap()
+                .last()
+                .unwrap()
+        );
+    */
+    //    dbg!(patter_std!("[[97 (vow `extended-grapheme-cluster)]]").unwrap());
+
     Ok(())
 }
 
@@ -972,9 +1022,7 @@ mod tests {
         "(with? default-args [3 5] `(#/add '0 '1) `never)",
         number!(8)
     }
-    /* fails due to stack overflow when run in test mode due to lack of tco
-    eval_test_std! {dedup, "(list/dedup [1 2 3 3 4 6 7 1 3])", patter!("(1 2 3 4 6 7)")}
-     */
+    eval_test_std! {dedup, "(list/dedup [1 3 3 6 7 3])", patter!("(1 3 6 7)")}
     eval_test_std! {
         dedup_bindings,
         "(list/dedup [[`a 1] [`b 2] [`c 3] [`d 4]])",
@@ -1063,6 +1111,22 @@ mod tests {
         vow_zero_width,
         "(with? [(vow :a)] [] `unit `never)",
         patter_std!("unit").unwrap()
+    }
+    eval_test! {
+        string,
+        "\"a\"",
+        SExpr::List(vec![
+            SExpr::List(vec![
+                number!(97),
+                SExpr::ZeroWidth(Box::new(SExpr::Ident(ident!("extended-grapheme-cluster")))),
+            ]),
+        ])
+    }
+
+    eval_test_std! {
+        string_id,
+        r#"(id "a")"#,
+        patter_std!("[[97 (vow `extended-grapheme-cluster)]]").unwrap()
     }
 
     #[test]

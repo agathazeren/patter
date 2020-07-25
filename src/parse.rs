@@ -1,6 +1,7 @@
 //! each parse_at function should start with the offset pointing to the first character of the thing to be parsed, and should end pointing to the character after the end of the thing to be parsed.
 
 use super::*;
+use crate::IntoSExpr;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token {
@@ -11,6 +12,7 @@ pub enum Token {
     NSOperator,
     Sigil(char),
     Num(isize),
+    Str(String),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -33,6 +35,14 @@ pub fn lex(source: &str) -> Vec<Token> {
             ')' => tokens.push(Close(Grouping::Paren)),
             '[' => tokens.push(Open(Grouping::Bracket)),
             ']' => tokens.push(Close(Grouping::Bracket)),
+            '"' => {
+                inc_char_idx(source, &mut offset);
+                let start = *offset;
+                while source[*offset..].chars().nth(0).unwrap() != '"' {
+                    inc_char_idx(source, &mut offset);
+                }
+                tokens.push(Str(source[start..*offset].to_string()));
+            }
             w if w.is_whitespace() => {
                 tokens.push(Whitespaces);
                 let mut looped = false;
@@ -133,6 +143,10 @@ fn parse_at(source: &[Token], offset: &mut usize) -> SExpr {
             '[',
             Box::new(parse_list_at(source, offset, Grouping::Bracket)),
         ),
+        Str(s) => {
+            *offset += 1;
+            s.clone().into_sexpr()
+        }
         Sigil(s) => {
             *offset += 1;
             if source[*offset] != Whitespaces {

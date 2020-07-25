@@ -1,5 +1,6 @@
-use rug::integer::TryFromIntegerError;
-use rug::{Integer, Rational};
+use num::bigint::{BigInt, BigUint, TryFromBigIntError};
+
+use num::rational::BigRational;
 
 use std::cmp::Ordering;
 use std::convert::TryFrom;
@@ -7,57 +8,54 @@ use std::ops::Add;
 
 #[derive(Clone, Debug)]
 pub struct Number {
-    rep: NumberRep,
-    precision: Precision,
+    pub rep: NumberRep,
+    pub precision: Precision,
 }
 
 #[derive(Clone, Debug)]
-enum NumberRep {
-    ArbitraryInteger(Integer),
-    ArbitraryRational(Rational),
+pub enum NumberRep {
+    ArbitraryInteger(BigInt),
+    ArbitraryRational(BigRational),
     ArbitraryFloat {
         significand: Box<Number>,
-        exponent: Integer,
-        base: PositiveInteger,
+        exponent: BigInt,
+        base: BigUint,
     },
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Precision {
+pub enum Precision {
     Rational {
-        numerator_range: Range<Integer>,
+        numerator_range: Range<BigInt>,
         denominator_range: Range<PositiveIntegerOrInvPositiveInteger>,
     },
     Float {
-        base: PositiveInteger,
+        base: BigUint,
         significand_range: Range<Box<Number>>,
-        exponent_range: Range<Integer>,
+        exponent_range: Range<BigInt>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Range<T>(LowerBound<T>, UpperBound<T>);
+pub struct Range<T>(LowerBound<T>, UpperBound<T>);
 
 #[derive(Clone, Debug, PartialEq)]
-enum Bound<T> {
+pub enum Bound<T> {
     Inclusive(T),
     Exclusive(T),
     Unbounded,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct LowerBound<T>(Bound<T>);
+pub struct LowerBound<T>(Bound<T>);
 
 #[derive(Clone, Debug, PartialEq)]
-struct UpperBound<T>(Bound<T>);
+pub struct UpperBound<T>(Bound<T>);
 
 #[derive(Clone, Debug, PartialEq)]
-struct PositiveInteger(Integer);
-
-#[derive(Clone, Debug, PartialEq)]
-enum PositiveIntegerOrInvPositiveInteger {
-    Integer(Integer),
-    Inv(Integer),
+pub enum PositiveIntegerOrInvPositiveInteger {
+    Integer(BigUint),
+    Inv(BigUint),
 }
 
 impl<T: PartialOrd> Range<T> {
@@ -148,7 +146,7 @@ impl PartialEq for NumberRep {
             }
             (ArbitraryRational(rat), ArbitraryInteger(int))
             | (ArbitraryInteger(int), ArbitraryRational(rat)) => {
-                *rat.denom() == Integer::from(1) && rat.numer() == int
+                *rat.denom() == BigInt::from(1) && rat.numer() == int
             }
             _ => unimplemented!(),
         }
@@ -156,7 +154,7 @@ impl PartialEq for NumberRep {
 }
 
 impl Precision {
-    fn integer(from: Integer, to: Integer) -> Precision {
+    pub fn integer(from: BigInt, to: BigInt) -> Precision {
         Precision::Rational {
             numerator_range: Range(
                 LowerBound(Bound::Inclusive(from)),
@@ -165,12 +163,12 @@ impl Precision {
             denominator_range: Range(
                 LowerBound(Bound::Inclusive(
                     PositiveIntegerOrInvPositiveInteger::Integer(
-                        Integer::from(1),
+                        BigUint::from(1_usize),
                     ),
                 )),
                 UpperBound(Bound::Inclusive(
                     PositiveIntegerOrInvPositiveInteger::Integer(
-                        Integer::from(1),
+                        BigUint::from(1_usize),
                     ),
                 )),
             ),
@@ -178,35 +176,40 @@ impl Precision {
     }
 
     fn add(left: &Precision, right: &Precision) -> Precision {
-        use Precision::*;
         use Bound::*;
+        use Precision::*;
         match (left, right) {
             (
                 Rational {
                     denominator_range: left_denominator_range,
-                    numerator_range: Range(
-                        LowerBound(Inclusive(left_lower)),
-                        UpperBound(Inclusive(left_upper)),
-                    )
-                            
+                    numerator_range:
+                        Range(
+                            LowerBound(Inclusive(left_lower)),
+                            UpperBound(Inclusive(left_upper)),
+                        ),
                 },
                 Rational {
                     denominator_range: right_denominator_range,
-                    numerator_range: Range(
-                        LowerBound(Inclusive(right_lower)),
-                        UpperBound(Inclusive(right_upper)),
-                    ),
-                }
+                    numerator_range:
+                        Range(
+                            LowerBound(Inclusive(right_lower)),
+                            UpperBound(Inclusive(right_upper)),
+                        ),
+                },
             ) if left_denominator_range == right_denominator_range => {
                 Rational {
                     denominator_range: left_denominator_range.clone(),
                     numerator_range: Range(
-                        LowerBound(Inclusive(Integer::from(left_lower + right_lower))),
-                        UpperBound(Inclusive(Integer::from(left_upper + right_upper))),
-                    )
+                        LowerBound(Inclusive(BigInt::from(
+                            left_lower + right_lower,
+                        ))),
+                        UpperBound(Inclusive(BigInt::from(
+                            left_upper + right_upper,
+                        ))),
+                    ),
                 }
             }
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
     }
 }
@@ -214,7 +217,7 @@ impl Precision {
 impl From<isize> for Number {
     fn from(int: isize) -> Number {
         Number {
-            rep: NumberRep::ArbitraryInteger(Integer::from(int)),
+            rep: NumberRep::ArbitraryInteger(BigInt::from(int)),
             precision: Precision::integer(isize::MIN.into(), isize::MAX.into()),
         }
     }
@@ -224,12 +227,12 @@ impl From<isize> for Number {
 pub enum FromNumberError {
     PrecisionTooLow,
     OutOfBounds,
-    TryFromIntegerError(TryFromIntegerError),
+    TryFromBigIntError(TryFromBigIntError<BigInt>),
 }
 
-impl From<TryFromIntegerError> for FromNumberError {
-    fn from(e: TryFromIntegerError) -> FromNumberError {
-        Self::TryFromIntegerError(e)
+impl From<TryFromBigIntError<BigInt>> for FromNumberError {
+    fn from(e: TryFromBigIntError<BigInt>) -> FromNumberError {
+        Self::TryFromBigIntError(e)
     }
 }
 
